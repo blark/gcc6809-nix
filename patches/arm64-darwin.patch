@@ -1,0 +1,736 @@
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/as-5.1.1/asxmak/darwin/build/makefile gcc6809-gitlab/as-5.1.1/asxmak/darwin/build/makefile
+--- gcc6809-fresh/as-5.1.1/asxmak/darwin/build/makefile	2025-12-25 21:49:47
++++ gcc6809-gitlab/as-5.1.1/asxmak/darwin/build/makefile	2025-12-24 11:54:14
+@@ -228,7 +228,7 @@
+ 
+ CC=		gcc
+ CCOPT=		-O3
+-CCFLAGS=	-Wall -funsigned-char $(CCOPT) $(EXTRA_ASXXXX_CFLAGS)
++CCFLAGS=	-Wall -Wno-format-security -funsigned-char $(CCOPT) $(EXTRA_ASXXXX_CFLAGS)
+ 
+ LD=		gcc
+ LDFLAGS=	-Wall $(EXTRA_ASXXXX_CFLAGS)
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/builtins.c gcc6809-gitlab/gcc/builtins.c
+--- gcc6809-fresh/gcc/builtins.c	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/builtins.c	2025-12-24 22:20:14
+@@ -3164,7 +3164,7 @@
+ 							    char_mode))
+ 	char_rtx = copy_to_mode_reg (char_mode, char_rtx);
+ 
+-      pat = GEN_FCN (icode) (result, gen_rtx_MEM (BLKmode, src_reg),
++      pat = GEN_FCN_4 (icode) (result, gen_rtx_MEM (BLKmode, src_reg),
+ 			     char_rtx, GEN_INT (align));
+       if (! pat)
+ 	return NULL_RTX;
+@@ -6046,7 +6046,7 @@
+       if (!insn_data[icode].operand[1].predicate (val, mode))
+ 	val = force_reg (mode, val);
+ 
+-      insn = GEN_FCN (icode) (mem, val);
++      insn = GEN_FCN_2 (icode) (mem, val);
+       if (insn)
+ 	{
+ 	  emit_insn (insn);
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/config/host-darwin.c gcc6809-gitlab/gcc/config/host-darwin.c
+--- gcc6809-fresh/gcc/config/host-darwin.c	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/config/host-darwin.c	2025-12-24 13:04:19
+@@ -23,56 +23,35 @@
+ #include <sys/mman.h>
+ #include "toplev.h"
+ #include "config/host-darwin.h"
++#include "hosthooks.h"
++#include "hosthooks-def.h"
+ 
+ /* Yes, this is really supposed to work.  */
++/* DISABLED for ARM64: This 1GB buffer causes aliasing issues with 32-bit GC page tables */
++#if 0
+ static char pch_address_space[1024*1024*1024] __attribute__((aligned (4096)));
++#endif
+ 
+ /* Return the address of the PCH address space, if the PCH will fit in it.  */
+ 
+ void *
+-darwin_gt_pch_get_address (size_t sz, int fd ATTRIBUTE_UNUSED)
++darwin_gt_pch_get_address (size_t sz ATTRIBUTE_UNUSED, int fd ATTRIBUTE_UNUSED)
+ {
+-  if (sz <= sizeof (pch_address_space))
+-    return pch_address_space;
+-  else
+-    return NULL;
++  /* DISABLED for ARM64 - return NULL to disable PCH */
++  return NULL;
+ }
+ 
+ /* Check ADDR and SZ for validity, and deallocate (using munmap) that part of
+    pch_address_space beyond SZ.  */
+ 
+ int
+-darwin_gt_pch_use_address (void *addr, size_t sz, int fd, size_t off)
++darwin_gt_pch_use_address (void *addr ATTRIBUTE_UNUSED,
++			   size_t sz ATTRIBUTE_UNUSED,
++			   int fd ATTRIBUTE_UNUSED,
++			   size_t off ATTRIBUTE_UNUSED)
+ {
+-  const size_t pagesize = getpagesize();
+-  void *mmap_result;
+-  int ret;
+-
+-  gcc_assert ((size_t)pch_address_space % pagesize == 0
+-	      && sizeof (pch_address_space) % pagesize == 0);
+-  
+-  ret = (addr == pch_address_space && sz <= sizeof (pch_address_space));
+-  if (! ret)
+-    sz = 0;
+-
+-  /* Round the size to a whole page size.  Normally this is a no-op.  */
+-  sz = (sz + pagesize - 1) / pagesize * pagesize;
+-
+-  if (munmap (pch_address_space + sz, sizeof (pch_address_space) - sz) != 0)
+-    fatal_error ("couldn't unmap pch_address_space: %m");
+-
+-  if (ret)
+-    {
+-      mmap_result = mmap (addr, sz,
+-			  PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED,
+-			  fd, off);
+-
+-      /* The file might not be mmap-able.  */
+-      ret = mmap_result != (void *) MAP_FAILED;
+-
+-      /* Sanity check for broken MAP_FIXED.  */
+-      gcc_assert (!ret || mmap_result == addr);
+-    }
+-
+-  return ret;
++  /* DISABLED for ARM64 - PCH not supported */
++  return 0;
+ }
++
++const struct host_hooks host_hooks = HOST_HOOKS_INITIALIZER;
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/config/m6809/m6809.md gcc6809-gitlab/gcc/config/m6809/m6809.md
+--- gcc6809-fresh/gcc/config/m6809/m6809.md	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/config/m6809/m6809.md	2025-12-24 22:25:13
+@@ -429,6 +429,109 @@
+ ;   DONE;
+ ; })
+ 
++;; SImode (32-bit) move expander.
++;; m6809 has no native 32-bit operations, so split into two HImode moves.
++;; Big-endian ordering: word 0 is high, word 1 is low.
++;; CONST_INT has VOIDmode, so must be handled specially.
++(define_expand "movsi"
++  [(set (match_operand:SI 0 "nonimmediate_operand" "")
++        (match_operand:SI 1 "general_operand" ""))]
++  ""
++{
++  rtx lo_src, hi_src, lo_dst, hi_dst;
++
++  /* Handle CONST_INT specially - it has VOIDmode and can't use subregs */
++  if (GET_CODE (operands[1]) == CONST_INT)
++    {
++      HOST_WIDE_INT val = INTVAL (operands[1]);
++      /* Big-endian: high word at offset 0, low word at offset 2 */
++      rtx hi_val = GEN_INT ((val >> 16) & 0xFFFF);
++      rtx lo_val = GEN_INT (val & 0xFFFF);
++
++      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
++      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
++      if (!hi_dst || !lo_dst)
++        FAIL;
++      emit_move_insn (hi_dst, hi_val);
++      emit_move_insn (lo_dst, lo_val);
++      DONE;
++    }
++
++  /* Handle CONST_DOUBLE for larger constants */
++  if (GET_CODE (operands[1]) == CONST_DOUBLE)
++    {
++      HOST_WIDE_INT val = CONST_DOUBLE_LOW (operands[1]);
++      rtx hi_val = GEN_INT ((val >> 16) & 0xFFFF);
++      rtx lo_val = GEN_INT (val & 0xFFFF);
++
++      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
++      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
++      if (!hi_dst || !lo_dst)
++        FAIL;
++      emit_move_insn (hi_dst, hi_val);
++      emit_move_insn (lo_dst, lo_val);
++      DONE;
++    }
++
++  /* For all other cases, source should have SImode */
++  if (GET_MODE (operands[1]) != SImode)
++    {
++      operands[1] = force_reg (SImode, operands[1]);
++    }
++
++  if (push_operand (operands[0], SImode))
++    {
++      /* Stack push: high half first, then low (big-endian) */
++      hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
++      lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
++      if (!hi_src || !lo_src)
++        FAIL;
++      emit_move_insn (adjust_address (operands[0], HImode, 0), hi_src);
++      emit_move_insn (adjust_address (operands[0], HImode, 0), lo_src);
++      DONE;
++    }
++  else if (pop_operand (operands[1], SImode))
++    {
++      /* Stack pop: low half first, then high (big-endian) */
++      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
++      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
++      if (!lo_dst || !hi_dst)
++        FAIL;
++      emit_move_insn (lo_dst, adjust_address (operands[1], HImode, 0));
++      emit_move_insn (hi_dst, adjust_address (operands[1], HImode, 0));
++      DONE;
++    }
++  else if (MEM_P (operands[0]) && MEM_P (operands[1]))
++    {
++      /* Mem-to-mem: use HImode temporaries */
++      rtx tmp_lo, tmp_hi;
++      lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
++      hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
++      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
++      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
++      if (!lo_src || !hi_src || !lo_dst || !hi_dst)
++        FAIL;
++      tmp_lo = gen_reg_rtx (HImode);
++      tmp_hi = gen_reg_rtx (HImode);
++      emit_move_insn (tmp_lo, lo_src);
++      emit_move_insn (tmp_hi, hi_src);
++      emit_move_insn (lo_dst, tmp_lo);
++      emit_move_insn (hi_dst, tmp_hi);
++      DONE;
++    }
++
++  /* General case: split into two HImode words using simplify_gen_subreg */
++  lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
++  hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
++  lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
++  hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
++  if (!lo_dst || !hi_dst || !lo_src || !hi_src)
++    FAIL;
++  emit_move_insn (lo_dst, lo_src);
++  emit_move_insn (hi_dst, hi_src);
++  DONE;
++})
++
+ 
+ (define_expand "movhi"
+   [(set (match_operand:HI 0 "nonimmediate_operand" "")
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/config/m6809/t-m6809 gcc6809-gitlab/gcc/config/m6809/t-m6809
+--- gcc6809-fresh/gcc/config/m6809/t-m6809	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/config/m6809/t-m6809	2025-12-24 22:34:06
+@@ -29,7 +29,7 @@
+ # Multilib information
+ # This creates multiple versions of libgcc.a for each set of incompatible
+ # -mxxx options.
+-MULTILIB_OPTIONS  = fpic mdret
++MULTILIB_OPTIONS  = mdret
+ MULTILIB_DIRNAMES =
+ MULTILIB_MATCHES  =
+ MULTILIB_EXCEPTIONS =
+@@ -38,20 +38,9 @@
+ LIBGCC = stmp-multilib
+ INSTALL_LIBGCC = install-multilib
+ 
+-# We want fine grained libraries, so use the new code to build the
+-# floating point emulation libraries.
+-FPBIT = fp-bit.c
+-
+-fp-bit.c: $(srcdir)/config/fp-bit.c
+-	echo '#define FLOAT' > fp-bit.c
+-	echo '#define FLOAT_ONLY' >> fp-bit.c
+-	echo '#define CMPtype HItype' >> fp-bit.c
+-	echo '#define SMALL_MACHINE' >> fp-bit.c
+-	echo '#ifdef __LITTLE_ENDIAN__' >> fp-bit.c
+-	echo '#define FLOAT_BIT_ORDER_MISMATCH' >>fp-bit.c
+-	echo '#endif' 		>> fp-bit.c
+-	echo '#define DI SI'	>> fp-bit.c
+-	cat $(srcdir)/config/fp-bit.c >> fp-bit.c
++# Floating point emulation library disabled - causes ICE with complex
++# code patterns the m6809 backend can't handle
++# FPBIT = fp-bit.c
+ 
+ # crt0.o is built from the following source file
+ CRT0_S = $(srcdir)/config/m6809/crt0.S
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/expmed.c gcc6809-gitlab/gcc/expmed.c
+--- gcc6809-fresh/gcc/expmed.c	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/expmed.c	2025-12-24 22:16:19
+@@ -434,7 +434,7 @@
+       gcc_assert ((*insn_data[icode].operand[0].predicate) (dest, mode0)
+ 		  && (*insn_data[icode].operand[1].predicate) (src, mode1)
+ 		  && (*insn_data[icode].operand[2].predicate) (rtxpos, mode2));
+-      pat = GEN_FCN (icode) (dest, src, rtxpos);
++      pat = GEN_FCN_3 (icode) (dest, src, rtxpos);
+       seq = get_insns ();
+       end_sequence ();
+       if (pat)
+@@ -544,7 +544,7 @@
+ 	  op0 = SUBREG_REG (op0);
+ 	}
+ 
+-      emit_insn (GEN_FCN (icode)
++      emit_insn (GEN_FCN_2 (icode)
+ 		 (gen_rtx_SUBREG (fieldmode, op0,
+ 				  (bitnum % BITS_PER_WORD) / BITS_PER_UNIT
+ 				  + (offset * UNITS_PER_WORD)),
+@@ -1245,7 +1245,7 @@
+ 		  && (*insn_data[icode].operand[1].predicate) (src, mode1)
+ 		  && (*insn_data[icode].operand[2].predicate) (rtxpos, mode2));
+ 
+-      pat = GEN_FCN (icode) (dest, src, rtxpos);
++      pat = GEN_FCN_3 (icode) (dest, src, rtxpos);
+       seq = get_insns ();
+       end_sequence ();
+       if (pat)
+@@ -5353,7 +5353,7 @@
+       if (optimize || ! (*pred) (subtarget, compare_mode))
+ 	subtarget = gen_reg_rtx (compare_mode);
+ 
+-      pattern = GEN_FCN (icode) (subtarget);
++      pattern = GEN_FCN_1 (icode) (subtarget);
+       if (pattern)
+ 	{
+ 	  emit_insn (pattern);
+@@ -5407,7 +5407,7 @@
+ 			    (subtarget, result_mode)))
+ 	    subtarget = gen_reg_rtx (result_mode);
+ 
+-	  pattern = GEN_FCN (icode) (subtarget, comparison, cstore_op0,
++	  pattern = GEN_FCN_4 (icode) (subtarget, comparison, cstore_op0,
+ 				     cstore_op1);
+ 
+ 	  if (pattern)
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/expr.c gcc6809-gitlab/gcc/expr.c
+--- gcc6809-fresh/gcc/expr.c	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/expr.c	2025-12-24 21:26:59
+@@ -124,7 +124,7 @@
+ static unsigned HOST_WIDE_INT move_by_pieces_ninsns (unsigned HOST_WIDE_INT,
+ 						     unsigned int,
+ 						     unsigned int);
+-static void move_by_pieces_1 (rtx (*) (rtx, ...), enum machine_mode,
++static void move_by_pieces_1 (insn_gen_fn_2, enum machine_mode,
+ 			      struct move_by_pieces *);
+ static bool block_move_libcall_safe_for_call_parm (void);
+ static bool emit_block_move_via_movmem (rtx, rtx, rtx, unsigned, unsigned, HOST_WIDE_INT);
+@@ -133,7 +133,7 @@
+ static rtx clear_by_pieces_1 (void *, HOST_WIDE_INT, enum machine_mode);
+ static void clear_by_pieces (rtx, unsigned HOST_WIDE_INT, unsigned int);
+ static void store_by_pieces_1 (struct store_by_pieces *, unsigned int);
+-static void store_by_pieces_2 (rtx (*) (rtx, ...), enum machine_mode,
++static void store_by_pieces_2 (insn_gen_fn_2, enum machine_mode,
+ 			       struct store_by_pieces *);
+ static tree clear_storage_libcall_fn (int);
+ static rtx compress_float_constant (rtx, rtx);
+@@ -1012,7 +1012,7 @@
+ 
+       icode = optab_handler (mov_optab, mode)->insn_code;
+       if (icode != CODE_FOR_nothing && align >= GET_MODE_ALIGNMENT (mode))
+-	move_by_pieces_1 (GEN_FCN (icode), mode, &data);
++	move_by_pieces_1 (GEN_FCN_2 (icode), mode, &data);
+ 
+       max_size = GET_MODE_SIZE (mode);
+     }
+@@ -1106,7 +1106,7 @@
+    to make a move insn for that mode.  DATA has all the other info.  */
+ 
+ static void
+-move_by_pieces_1 (rtx (*genfun) (rtx, ...), enum machine_mode mode,
++move_by_pieces_1 (insn_gen_fn_2 genfun, enum machine_mode mode,
+ 		  struct move_by_pieces *data)
+ {
+   unsigned int size = GET_MODE_SIZE (mode);
+@@ -1357,9 +1357,9 @@
+ 	     emitting the libcall would be more efficient.  */
+ 
+ 	  if (insn_data[(int) code].n_operands == 4)
+-	    pat = GEN_FCN ((int) code) (x, y, op2, opalign);
++	    pat = GEN_FCN_4 ((int) code) (x, y, op2, opalign);
+ 	  else
+-	    pat = GEN_FCN ((int) code) (x, y, op2, opalign,
++	    pat = GEN_FCN_6 ((int) code) (x, y, op2, opalign,
+ 					GEN_INT (expected_align),
+ 					GEN_INT (expected_size));
+ 	  if (pat)
+@@ -2518,7 +2518,7 @@
+ 
+       icode = optab_handler (mov_optab, mode)->insn_code;
+       if (icode != CODE_FOR_nothing && align >= GET_MODE_ALIGNMENT (mode))
+-	store_by_pieces_2 (GEN_FCN (icode), mode, data);
++	store_by_pieces_2 (GEN_FCN_2 (icode), mode, data);
+ 
+       max_size = GET_MODE_SIZE (mode);
+     }
+@@ -2532,7 +2532,7 @@
+    to make a move insn for that mode.  DATA has all the other info.  */
+ 
+ static void
+-store_by_pieces_2 (rtx (*genfun) (rtx, ...), enum machine_mode mode,
++store_by_pieces_2 (insn_gen_fn_2 genfun, enum machine_mode mode,
+ 		   struct store_by_pieces *data)
+ {
+   unsigned int size = GET_MODE_SIZE (mode);
+@@ -2777,9 +2777,9 @@
+ 	    }
+ 
+ 	  if (insn_data[(int) code].n_operands == 4)
+-	    pat = GEN_FCN ((int) code) (object, opsize, opchar, opalign);
++	    pat = GEN_FCN_4 ((int) code) (object, opsize, opchar, opalign);
+ 	  else
+-	    pat = GEN_FCN ((int) code) (object, opsize, opchar, opalign,
++	    pat = GEN_FCN_6 ((int) code) (object, opsize, opchar, opalign,
+ 					GEN_INT (expected_align),
+ 					GEN_INT (expected_size));
+ 	  if (pat)
+@@ -2993,7 +2993,7 @@
+   y = emit_move_change_mode (imode, mode, y, force);
+   if (y == NULL_RTX)
+     return NULL_RTX;
+-  return emit_insn (GEN_FCN (code) (x, y));
++  return emit_insn (GEN_FCN_2 (code) (x, y));
+ }
+ 
+ /* A subroutine of emit_move_insn_1.  X is a push_operand in MODE.
+@@ -3189,7 +3189,7 @@
+ 	{
+ 	  x = emit_move_change_mode (CCmode, mode, x, true);
+ 	  y = emit_move_change_mode (CCmode, mode, y, true);
+-	  return emit_insn (GEN_FCN (code) (x, y));
++	  return emit_insn (GEN_FCN_2 (code) (x, y));
+ 	}
+     }
+ 
+@@ -3326,7 +3326,7 @@
+ 
+   code = optab_handler (mov_optab, mode)->insn_code;
+   if (code != CODE_FOR_nothing)
+-    return emit_insn (GEN_FCN (code) (x, y));
++    return emit_insn (GEN_FCN_2 (code) (x, y));
+ 
+   /* Expand complex moves by moving real part and imag part.  */
+   if (COMPLEX_MODE_P (mode))
+@@ -3579,7 +3579,7 @@
+       if (((pred = insn_data[(int) icode].operand[0].predicate)
+ 	   && !((*pred) (x, mode))))
+ 	x = force_reg (mode, x);
+-      emit_insn (GEN_FCN (icode) (x));
++      emit_insn (GEN_FCN_1 (icode) (x));
+       return;
+     }
+   if (GET_MODE_SIZE (mode) == rounded_size)
+@@ -4396,7 +4396,7 @@
+ 	return false;
+     }
+ 
+-  pattern = GEN_FCN (code) (to, from);
++  pattern = GEN_FCN_2 (code) (to, from);
+   if (pattern == NULL_RTX)
+     return false;
+ 
+@@ -5653,7 +5653,7 @@
+ 	  }
+ 
+ 	if (vector)
+-	  emit_insn (GEN_FCN (icode)
++	  emit_insn (GEN_FCN_2 (icode)
+ 		     (target,
+ 		      gen_rtx_PARALLEL (GET_MODE (target), vector)));
+ 	break;
+@@ -7556,7 +7556,7 @@
+ 	    reg = gen_reg_rtx (mode);
+ 
+ 	    /* Nor can the insn generator.  */
+-	    insn = GEN_FCN (icode) (reg, temp);
++	    insn = GEN_FCN_2 (icode) (reg, temp);
+ 	    emit_insn (insn);
+ 
+ 	    return reg;
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/optabs.c gcc6809-gitlab/gcc/optabs.c
+--- gcc6809-fresh/gcc/optabs.c	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/optabs.c	2025-12-24 22:15:40
+@@ -628,10 +628,10 @@
+               && wxmode != VOIDmode)
+             wxop = copy_to_mode_reg (wxmode, wxop);
+ 
+-          pat = GEN_FCN (icode) (temp, xop0, xop1, wxop);
++          pat = GEN_FCN_4 (icode) (temp, xop0, xop1, wxop);
+         }
+       else
+-        pat = GEN_FCN (icode) (temp, xop0, xop1);
++        pat = GEN_FCN_3 (icode) (temp, xop0, xop1);
+     }
+   else
+     {
+@@ -641,10 +641,10 @@
+               && wxmode != VOIDmode)
+             wxop = copy_to_mode_reg (wxmode, wxop);
+ 
+-          pat = GEN_FCN (icode) (temp, xop0, wxop);
++          pat = GEN_FCN_3 (icode) (temp, xop0, wxop);
+         }
+       else
+-        pat = GEN_FCN (icode) (temp, xop0);
++        pat = GEN_FCN_2 (icode) (temp, xop0);
+     }
+ 
+   emit_insn (pat);
+@@ -724,7 +724,7 @@
+       && mode2 != VOIDmode)
+     xop2 = copy_to_mode_reg (mode2, xop2);
+ 
+-  pat = GEN_FCN (icode) (temp, xop0, xop1, xop2);
++  pat = GEN_FCN_4 (icode) (temp, xop0, xop1, xop2);
+ 
+   emit_insn (pat);
+   return temp;
+@@ -816,7 +816,7 @@
+     target = gen_reg_rtx (mode);
+ 
+   /* Emit instruction */
+-  pat = GEN_FCN (icode) (target, rtx_op1, rtx_op2);
++  pat = GEN_FCN_3 (icode) (target, rtx_op1, rtx_op2);
+   gcc_assert (pat);
+   emit_insn (pat);
+ 
+@@ -1504,7 +1504,7 @@
+   if (!insn_data[icode].operand[0].predicate (temp, tmp_mode))
+     temp = gen_reg_rtx (tmp_mode);
+   
+-  pat = GEN_FCN (icode) (temp, xop0, xop1);
++  pat = GEN_FCN_3 (icode) (temp, xop0, xop1);
+   if (pat)
+     {
+       /* If PAT is composed of more than one insn, try to add an appropriate
+@@ -2341,7 +2341,7 @@
+       gcc_assert (insn_data[icode].operand[0].predicate (targ0, mode));
+       gcc_assert (insn_data[icode].operand[1].predicate (targ1, mode));
+ 
+-      pat = GEN_FCN (icode) (targ0, targ1, xop0);
++      pat = GEN_FCN_3 (icode) (targ0, targ1, xop0);
+       if (pat)
+ 	{
+ 	  emit_insn (pat);
+@@ -2458,7 +2458,7 @@
+       gcc_assert (insn_data[icode].operand[0].predicate (targ0, mode));
+       gcc_assert (insn_data[icode].operand[3].predicate (targ1, mode));
+ 
+-      pat = GEN_FCN (icode) (targ0, xop0, xop1, targ1);
++      pat = GEN_FCN_4 (icode) (targ0, xop0, xop1, targ1);
+       if (pat)
+ 	{
+ 	  emit_insn (pat);
+@@ -3061,7 +3061,7 @@
+       if (!insn_data[icode].operand[0].predicate (temp, mode))
+ 	temp = gen_reg_rtx (mode);
+ 
+-      pat = GEN_FCN (icode) (temp, xop0);
++      pat = GEN_FCN_2 (icode) (temp, xop0);
+       if (pat)
+ 	{
+ 	  if (INSN_P (pat) && NEXT_INSN (pat) != NULL_RTX
+@@ -3760,7 +3760,7 @@
+   if (!insn_data[icode].operand[0].predicate (temp, GET_MODE (temp)))
+     temp = gen_reg_rtx (GET_MODE (temp));
+ 
+-  pat = GEN_FCN (icode) (temp, op0);
++  pat = GEN_FCN_2 (icode) (temp, op0);
+ 
+   if (INSN_P (pat) && NEXT_INSN (pat) != NULL_RTX && code != UNKNOWN)
+     add_equal_note (pat, temp, code, op0, NULL_RTX);
+@@ -4247,7 +4247,7 @@
+ 	  result_mode = insn_data[cmp_code].operand[0].mode;
+ 	  result = gen_reg_rtx (result_mode);
+ 	  size = convert_to_mode (cmp_mode, size, 1);
+-	  emit_insn (GEN_FCN (cmp_code) (result, x, y, size, opalign));
++	  emit_insn (GEN_FCN_5 (cmp_code) (result, x, y, size, opalign));
+ 
+ 	  *px = result;
+ 	  *py = const0_rtx;
+@@ -4386,7 +4386,7 @@
+ 	    {
+ 	      x = prepare_operand (icode, x, 1, mode, wider_mode, unsignedp);
+ 	      y = prepare_operand (icode, y, 2, mode, wider_mode, unsignedp);
+-	      emit_jump_insn (GEN_FCN (icode) (test, x, y, label));
++	      emit_jump_insn (GEN_FCN_4 (icode) (test, x, y, label));
+ 	      return;
+ 	    }
+ 	}
+@@ -4396,7 +4396,7 @@
+       if (y == CONST0_RTX (mode) && icode != CODE_FOR_nothing)
+ 	{
+ 	  x = prepare_operand (icode, x, 0, mode, wider_mode, unsignedp);
+-	  emit_insn (GEN_FCN (icode) (x));
++	  emit_insn (GEN_FCN_1 (icode) (x));
+ 	  if (label)
+ 	    emit_jump_insn (bcc_gen_fctn[(int) comparison] (label));
+ 	  return;
+@@ -4409,7 +4409,7 @@
+ 	{
+ 	  x = prepare_operand (icode, x, 0, mode, wider_mode, unsignedp);
+ 	  y = prepare_operand (icode, y, 1, mode, wider_mode, unsignedp);
+-	  emit_insn (GEN_FCN (icode) (x, y));
++	  emit_insn (GEN_FCN_2 (icode) (x, y));
+ 	  if (label)
+ 	    emit_jump_insn (bcc_gen_fctn[(int) comparison] (label));
+ 	  return;
+@@ -4723,7 +4723,7 @@
+   if (GET_CODE (comparison) != code)
+     return NULL_RTX;
+ 
+-  insn = GEN_FCN (icode) (subtarget, comparison, op2, op3);
++  insn = GEN_FCN_4 (icode) (subtarget, comparison, op2, op3);
+ 
+   /* If that failed, then give up.  */
+   if (insn == 0)
+@@ -4851,7 +4851,7 @@
+   if (GET_CODE (comparison) != code)
+     return NULL_RTX;
+ 
+-  insn = GEN_FCN (icode) (subtarget, comparison, op2, op3);
++  insn = GEN_FCN_4 (icode) (subtarget, comparison, op2, op3);
+ 
+   /* If that failed, then give up.  */
+   if (insn == 0)
+@@ -4883,7 +4883,7 @@
+   gcc_assert (insn_data[icode].operand[2].predicate
+ 	      (y, insn_data[icode].operand[2].mode));
+ 
+-  return GEN_FCN (icode) (x, x, y);
++  return GEN_FCN_3 (icode) (x, x, y);
+ }
+ 
+ /* Generate and return an insn body to add r1 and c,
+@@ -4903,7 +4903,7 @@
+ 	   (c, insn_data[icode].operand[2].mode)))
+     return NULL_RTX;
+ 
+-  return GEN_FCN (icode) (r0, r1, c);
++  return GEN_FCN_3 (icode) (r0, r1, c);
+ }
+ 
+ int
+@@ -4943,7 +4943,7 @@
+   gcc_assert  (insn_data[icode].operand[2].predicate
+ 	       (y, insn_data[icode].operand[2].mode));
+ 
+-  return GEN_FCN (icode) (x, x, y);
++  return GEN_FCN_3 (icode) (x, x, y);
+ }
+ 
+ /* Generate and return an insn body to subtract r1 and c,
+@@ -4963,7 +4963,7 @@
+ 	   (c, insn_data[icode].operand[2].mode)))
+     return NULL_RTX;
+ 
+-  return GEN_FCN (icode) (r0, r1, c);
++  return GEN_FCN_3 (icode) (r0, r1, c);
+ }
+ 
+ int
+@@ -5029,8 +5029,9 @@
+ gen_extend_insn (rtx x, rtx y, enum machine_mode mto,
+ 		 enum machine_mode mfrom, int unsignedp)
+ {
++  typedef rtx (*gen_fn_2)(rtx, rtx);
+   enum insn_code icode = can_extend_p (mto, mfrom, unsignedp);
+-  return GEN_FCN (icode) (x, y);
++  return GEN_FCN_2 (icode) (x, y);
+ }
+ 
+ /* can_fix_p and can_float_p say whether the target machine
+@@ -6832,7 +6833,7 @@
+       end_sequence ();
+       return 0;
+     }
+-  emit_insn (GEN_FCN (icode) (op1, op2));
++  emit_insn (GEN_FCN_2 (icode) (op1, op2));
+ 
+   PUT_CODE (trap_rtx, code);
+   gcc_assert (HAVE_conditional_trap);
+@@ -7000,7 +7001,7 @@
+     rtx_op2 = force_reg (mode, rtx_op2);
+ 
+   /* Emit instruction! */
+-  emit_insn (GEN_FCN (icode) (target, rtx_op1, rtx_op2,
++  emit_insn (GEN_FCN_6 (icode) (target, rtx_op1, rtx_op2,
+ 			      comparison, cc_op0,  cc_op1));
+ 
+   return target;
+@@ -7033,7 +7034,7 @@
+   if (!insn_data[icode].operand[3].predicate (new_val, mode))
+     new_val = force_reg (mode, new_val);
+ 
+-  insn = GEN_FCN (icode) (target, mem, old_val, new_val);
++  insn = GEN_FCN_4 (icode) (target, mem, old_val, new_val);
+   if (insn == NULL_RTX)
+     return NULL_RTX;
+   emit_insn (insn);
+@@ -7112,7 +7113,7 @@
+ 	  if (!insn_data[icode].operand[0].predicate (target, cmode))
+ 	    subtarget = gen_reg_rtx (cmode);
+ 
+-	  insn = GEN_FCN (icode) (subtarget);
++	  insn = GEN_FCN_1 (icode) (subtarget);
+ 	  if (insn)
+ 	    {
+ 	      emit_insn (insn);
+@@ -7274,7 +7275,7 @@
+       if (!insn_data[icode].operand[1].predicate (val, mode))
+ 	val = force_reg (mode, val);
+ 
+-      insn = GEN_FCN (icode) (mem, val);
++      insn = GEN_FCN_2 (icode) (mem, val);
+       if (insn)
+ 	{
+ 	  emit_insn (insn);
+@@ -7408,7 +7409,7 @@
+       if (!insn_data[icode].operand[2].predicate (val, mode))
+ 	val = force_reg (mode, val);
+ 
+-      insn = GEN_FCN (icode) (target, mem, val);
++      insn = GEN_FCN_3 (icode) (target, mem, val);
+       if (insn)
+ 	{
+ 	  emit_insn (insn);
+@@ -7495,7 +7496,7 @@
+       if (!insn_data[icode].operand[2].predicate (val, mode))
+ 	val = force_reg (mode, val);
+ 
+-      insn = GEN_FCN (icode) (target, mem, val);
++      insn = GEN_FCN_3 (icode) (target, mem, val);
+       if (insn)
+ 	{
+ 	  emit_insn (insn);
+diff -ruN --exclude=.git --exclude=config.guess --exclude=config.sub gcc6809-fresh/gcc/optabs.h gcc6809-gitlab/gcc/optabs.h
+--- gcc6809-fresh/gcc/optabs.h	2025-12-25 21:49:47
++++ gcc6809-gitlab/gcc/optabs.h	2025-12-24 21:23:56
+@@ -72,6 +72,26 @@
+    the body of that kind of insn.  */
+ #define GEN_FCN(CODE) (insn_data[CODE].genfun)
+ 
++/* ARM64 ABI fix: The insn_gen_fn typedef uses variadic (rtx, ...) but actual
++   generator functions are non-variadic.  On ARM64, variadic args go on stack
++   while regular args use registers, causing argument corruption.
++   These typed macros cast to the correct function pointer type.  */
++typedef rtx (*insn_gen_fn_1) (rtx);
++typedef rtx (*insn_gen_fn_2) (rtx, rtx);
++typedef rtx (*insn_gen_fn_3) (rtx, rtx, rtx);
++typedef rtx (*insn_gen_fn_4) (rtx, rtx, rtx, rtx);
++typedef rtx (*insn_gen_fn_5) (rtx, rtx, rtx, rtx, rtx);
++typedef rtx (*insn_gen_fn_6) (rtx, rtx, rtx, rtx, rtx, rtx);
++typedef rtx (*insn_gen_fn_7) (rtx, rtx, rtx, rtx, rtx, rtx, rtx);
++
++#define GEN_FCN_1(CODE) ((insn_gen_fn_1) GEN_FCN (CODE))
++#define GEN_FCN_2(CODE) ((insn_gen_fn_2) GEN_FCN (CODE))
++#define GEN_FCN_3(CODE) ((insn_gen_fn_3) GEN_FCN (CODE))
++#define GEN_FCN_4(CODE) ((insn_gen_fn_4) GEN_FCN (CODE))
++#define GEN_FCN_5(CODE) ((insn_gen_fn_5) GEN_FCN (CODE))
++#define GEN_FCN_6(CODE) ((insn_gen_fn_6) GEN_FCN (CODE))
++#define GEN_FCN_7(CODE) ((insn_gen_fn_7) GEN_FCN (CODE))
++
+ /* Enumeration of valid indexes into optab_table.  */
+ enum optab_index
+ {

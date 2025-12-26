@@ -1,0 +1,18 @@
+# Nix
+result
+result-*
+
+# Build artifacts
+*.log
+*.rel
+*.s19
+*.map
+*.lst
+*.rst
+
+# Backups
+*.backup
+SOURCES.md
+
+# Vendored sources (now fetched by Nix)
+vendor/
