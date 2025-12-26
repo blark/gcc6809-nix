@@ -1,3 +1,6 @@
+# macOS
+.DS_Store
+
 # Nix
 result
 result-*
@@ -16,3 +19,4 @@ SOURCES.md
 
 # Vendored sources (now fetched by Nix)
 vendor/
+*.s
