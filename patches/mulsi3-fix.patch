@@ -1,0 +1,154 @@
+--- a/gcc/config/m6809/t-m6809	1969-12-31 19:00:01
++++ b/gcc/config/m6809/t-m6809	2025-12-31 08:31:52
+@@ -8,11 +8,13 @@
+ # Here are the functions that are implemented within libgcc1.s
+ LIB1ASMFUNCS = _mulhi3 _divhi3 _modhi3 _udivhi3 _umodhi3 \
+ 	_euclid _seuclid _clzsi2 _clzdi2 _ctzsi2 _ctzdi2 \
+-	_ashlhi3 _ashrhi3 _lshrhi3 _m0 _m4 _im0 _im4 _fm0 _fm4
++	_ashlhi3 _ashrhi3 _lshrhi3 _m0 _m4 _im0 _im4 _fm0 _fm4 \
++	_mulsi3
+ 
+ # Software emulation for integer div and mod
+ LIB2FUNCS_EXTRA = $(srcdir)/config/udivmodsi4.c $(srcdir)/config/udivmod.c $(srcdir)/config/divmod.c
+-LIB2FUNCS_EXCLUDE = _divdi3 _moddi3 _udivdi3 _umoddi3 _udivmoddi4
++# Exclude _muldi3 because it has a bug where it doesn't write to the result pointer
++LIB2FUNCS_EXCLUDE = _divdi3 _moddi3 _udivdi3 _umoddi3 _udivmoddi4 _muldi3
+ 
+ # Flags to use when building libgcc.  IN_GCC does not seem necessary,
+ # although the compile breaks without it.  -DDF=SF is required to set
+--- a/gcc/config/m6809/libgcc1.s	1969-12-31 19:00:01
++++ b/gcc/config/m6809/libgcc1.s	2025-12-31 08:30:07
+@@ -280,8 +280,133 @@
+ 	leax	16,x
+ 	rts
+ #endif
++
++
++#ifdef L_mulsi3
++;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
++;;; ___mulsi3 - 32x32 -> 32 bit multiply
++;;; Called by GCC to implement 32-bit multiplication
++;;; Arguments: Two 32-bit values on stack, result pointer in X
++;;; Result: 32-bit result written to address in X
++;;;
++;;; Stack layout at entry (X = sret pointer):
++;;;   0,s-1,s = return address
++;;;   2,s-3,s = v_lo (second arg, low word)
++;;;   4,s-5,s = v_hi
++;;;   6,s-7,s = u_lo (first arg, low word)
++;;;   8,s-9,s = u_hi
++;;;
++;;; Algorithm: result = u_lo*v_lo + (u_lo*v_hi + u_hi*v_lo)<<16
++;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
++	.area	.text
++	.globl	___mulsi3
++___mulsi3:
++	pshs	x		; save sret pointer (passed in X)
++	leax	2,s		; X = original SP (return address)
++	leas	-12,s		; locals:
++				; 0,1 lo   2,3 hi   4,5 mid
++				; 6 mid_carry  7 lo_carry
++				; 8,9 tmp0  10,11 tmp1
++
++	; p0 = u_lo.low * v_lo.low
++	lda	7,x		; u_lo.low
++	ldb	3,x		; v_lo.low
++	mul
++	std	0,s		; lo = p0
+ 
++	; p1 = u_lo.low * v_lo.high
++	lda	7,x
++	ldb	2,x		; v_lo.high
++	mul
++	std	4,s		; mid = p1
+ 
++	; p2 = u_lo.high * v_lo.low
++	lda	6,x		; u_lo.high
++	ldb	3,x
++	mul
++	addd	4,s
++	std	4,s
++	lda	#0
++	adca	#0
++	sta	6,s		; mid_carry (0/1)
++
++	; p3 = u_lo.high * v_lo.high
++	lda	6,x
++	ldb	2,x
++	mul
++	std	2,s		; hi = p3
++
++	; lo = p0 + (mid_low << 8)
++	ldd	0,s
++	adda	5,s		; mid.low
++	std	0,s
++	lda	#0
++	adca	#0
++	sta	7,s		; lo_carry (0/1)
++
++	; hi = p3 + mid_high + mid_carry + lo_carry
++	ldd	2,s
++	addb	4,s		; mid.high
++	adca	#0
++	addb	7,s		; lo_carry
++	adca	#0
++	adda	6,s		; mid_carry
++	std	2,s
++
++	; cross1 = low16(u_lo * v_hi)
++	lda	7,x		; u_lo.low
++	ldb	5,x		; v_hi.low
++	mul
++	std	8,s		; tmp0 = p0
++	lda	7,x
++	ldb	4,x		; v_hi.high
++	mul
++	std	10,s		; tmp1 = p1
++	lda	6,x		; u_lo.high
++	ldb	5,x
++	mul
++	addd	10,s
++	std	10,s		; tmp1 = p1+p2
++	ldd	8,s
++	adda	11,s		; tmp0 += (tmp1.low << 8)
++	std	8,s
++	ldd	2,s
++	addd	8,s
++	std	2,s		; hi += cross1
++
++	; cross2 = low16(u_hi * v_lo)
++	lda	9,x		; u_hi.low
++	ldb	3,x		; v_lo.low
++	mul
++	std	8,s
++	lda	9,x
++	ldb	2,x		; v_lo.high
++	mul
++	std	10,s
++	lda	8,x		; u_hi.high
++	ldb	3,x
++	mul
++	addd	10,s
++	std	10,s
++	ldd	8,s
++	adda	11,s
++	std	8,s
++	ldd	2,s
++	addd	8,s
++	std	2,s		; hi += cross2
++
++	; store result via hidden sret pointer
++	ldx	-2,x		; reload sret pointer
++	ldd	2,s		; hi
++	std	0,x		; store hi at +0 (big-endian result)
++	ldd	0,s		; lo
++	std	2,x		; store lo at +2
++
++	leas	12,s
++	puls	x,pc
++#endif
++
++
+ #ifdef L_mulhi3
+ ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ ;;; ___mulhi3 - signed/unsigned multiply

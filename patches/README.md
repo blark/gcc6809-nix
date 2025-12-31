@@ -66,3 +66,47 @@ Added 32-bit move pattern. The m6809 is 16-bit so this splits into two HImode mo
 **File:** `as-5.1.1/asxmak/darwin/build/makefile`
 
 Added `-Wno-format-security` (modern compilers error on format string issues).
+
+---
+
+# indirect-call-fix.patch
+
+Fixes indirect function calls clobbering the X register when called after setjmp.
+
+## Problem
+
+When calling a function pointer stored in a variable, GCC would load the address into X, then emit a `JSR ,X` instruction. But if the call was in a setjmp context, the value in X could be clobbered by register restoration before the JSR executed.
+
+## Fix
+
+**File:** `gcc/config/m6809/m6809.c`
+
+Modified `m6809_output_function_call()` to use a safer pattern for indirect calls:
+1. Push X register onto stack
+2. JSR through stack-indirect addressing `[,S++]`
+
+This ensures the target address isn't held in a register across any potential interference.
+
+---
+
+# mulsi3-fix.patch
+
+Fixes 32-bit multiplication returning 0.
+
+## Problem
+
+`___mulsi3` from libgcc2.c doesn't write the result to the hidden result pointer passed in the X register. The function computes the correct result internally but fails to store it to the memory location expected by the caller.
+
+This happens because libgcc2.c is compiled through GCC's internal build process with different headers (tconfig.h, tm.h) that don't properly configure the struct return handling for the m6809 backend.
+
+## Fix
+
+**Files:** `gcc/config/m6809/libgcc1.s`, `gcc/config/m6809/t-m6809`
+
+1. Added hand-written `___mulsi3` assembly implementation to libgcc1.s
+2. Added `_mulsi3` to LIB1ASMFUNCS in t-m6809
+3. Added `_muldi3` to LIB2FUNCS_EXCLUDE to prevent the broken libgcc2.c version from being linked
+
+The assembly implementation correctly handles the m6809 ABI:
+- Arguments on stack with low word at lower address
+- Result written to sret pointer with high word at offset 0, low word at offset 2

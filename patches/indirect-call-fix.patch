@@ -1,0 +1,68 @@
+--- a/gcc/config/m6809/m6809.c	2025-12-30 17:21:50
++++ b/gcc/config/m6809/m6809.c	2025-12-30 18:43:03
+@@ -2029,16 +2029,61 @@
+ 	}
+ }
+ 
++
++/* Check if an address is stack-relative (uses S register). */
++static bool
++stack_relative_address_p (rtx addr)
++{
++	if (REG_P (addr) && REGNO (addr) == STACK_POINTER_REGNUM)
++		return true;
++	if (GET_CODE (addr) == PLUS)
++	{
++		rtx op0 = XEXP (addr, 0);
++		if (REG_P (op0) && REGNO (op0) == STACK_POINTER_REGNUM)
++			return true;
++	}
++	return false;
++}
+ 
+ /** Outputs the assembly language for a call. */
+ void
+ output_call_insn (rtx *operands)
+ {
+-	/* First output the JSR instruction */
+-	fputs ("\tjsr\t", asm_out_file);
++	rtx call_target = XEXP (operands[0], 0);
+ 
+-	/* Finally output the operand and a new line */
+-	print_operand_address (asm_out_file, XEXP (operands[0], 0), operands[1]);
++	/* If this is an indirect call through a stack-relative memory location,
++	   we need to load the target address into Y first and call through Y.
++	   We use Y because X may contain an argument.  This works around a bug
++	   where argument pushes change the stack pointer before the call executes,
++	   but the stack offset in the operand was calculated before those pushes.
++	   Note: We also need to adjust the offset by the bytes of arguments
++	   pushed (operands[1] contains this value). */
++	if (MEM_P (call_target))
++	{
++		rtx mem_addr = XEXP (call_target, 0);
++		if (stack_relative_address_p (mem_addr))
++		{
++			HOST_WIDE_INT arg_bytes = INTVAL (operands[1]);
++			/* Emit: ldy <adjusted-offset>,s  (not indirect!) */
++			if (GET_CODE (mem_addr) == PLUS)
++			{
++				HOST_WIDE_INT offset = INTVAL (XEXP (mem_addr, 1));
++				fprintf (asm_out_file, "\tldy\t%d,s\n", (int)(offset + arg_bytes));
++			}
++			else
++			{
++				/* Just S register, offset is 0 */
++				fprintf (asm_out_file, "\tldy\t%d,s\n", (int)arg_bytes);
++			}
++			/* Emit: jsr ,y */
++			fputs ("\tjsr\t,y\n", asm_out_file);
++			return;
++		}
++	}
++
++	/* Direct call or indirect through non-stack location */
++	fputs ("\tjsr\t", asm_out_file);
++	print_operand_address (asm_out_file, call_target, operands[1]);
+ 	putc ('\n', asm_out_file);
+ }
+ 

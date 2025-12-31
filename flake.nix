@@ -49,7 +49,7 @@
               sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
             };
 
-            patches = [ ./patches/arm64-darwin.patch ];
+            patches = [ ./patches/arm64-darwin.patch ./patches/indirect-call-fix.patch ./patches/mulsi3-fix.patch ];
 
             # gcc12 required because macOS clang can't build GCC
             nativeBuildInputs = with pkgs; [
@@ -242,8 +242,21 @@
             };
           };
 
+          # Patched source for development
+          gcc6809-src = pkgs.stdenv.mkDerivation {
+            pname = "gcc6809-src";
+            version = "4.3.6";
+            src = pkgs.fetchgit {
+              url = "https://gitlab.com/dfffffff/gcc6809.git";
+              rev = "e401b3bc8b7a100218185683e7d36c100ef9d4b6";
+              sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
+            };
+            patches = [ ./patches/arm64-darwin.patch ];
+            phases = [ "unpackPhase" "patchPhase" "installPhase" ];
+            installPhase = "cp -r . $out";
+          };
         in {
-          inherit gcc6809 newlib-m6809 toolchain;
+          inherit gcc6809 newlib-m6809 toolchain gcc6809-src;
           default = toolchain;
         });
 
@@ -256,10 +269,12 @@
             M6809_SYSROOT = "${self.packages.${system}.toolchain}/m6809-unknown-none";
             M6809_CFLAGS = "-I${self.packages.${system}.toolchain}/m6809-unknown-none/include";
             M6809_LIBC = "${self.packages.${system}.toolchain}/m6809-unknown-none/lib/libc.a";
+            GCC6809_SRC = "${self.packages.${system}.gcc6809-src}";
             shellHook = ''
               echo "GCC 6809 toolchain available"
               echo "  Compiler: m6809-unknown-none-gcc \$M6809_CFLAGS"
               echo "  Linker: aslink ... -l \$M6809_LIBC"
+              echo "  Patched source: \$GCC6809_SRC"
             '';
           };
         });
