@@ -15,6 +15,9 @@ Usage:
 
 Test files should contain an EXPECT comment:
     // EXPECT: 42
+
+For tests expected to fail (known compiler bugs), use:
+    // XFAIL: description of why it fails
 """
 
 import array
@@ -95,6 +98,14 @@ def parse_expect(c_source: str) -> int | None:
     match = re.search(r'//\s*EXPECT:\s*(-?\d+)', c_source)
     if match:
         return int(match.group(1))
+    return None
+
+
+def parse_xfail(c_source: str) -> str | None:
+    """Parse XFAIL comment from C source (expected failure)"""
+    match = re.search(r'//\s*XFAIL:\s*(.+)', c_source)
+    if match:
+        return match.group(1).strip()
     return None
 
 
@@ -254,10 +265,13 @@ def main():
 
     passed = 0
     failed = 0
+    xfailed = 0  # expected failures that failed (good)
+    xpassed = 0  # expected failures that passed (surprising)
 
     for test_file in test_files:
         c_source = test_file.read_text()
         expected = parse_expect(c_source)
+        xfail_reason = parse_xfail(c_source)
 
         if expected is None:
             print(f"\n[SKIP] {test_file.stem}: no EXPECT comment")
@@ -268,17 +282,34 @@ def main():
         try:
             result = runner.compile_and_run(test_file)
             if result == expected:
-                print(f"  PASS: {result}")
-                passed += 1
+                if xfail_reason:
+                    print(f"  XPASS: {result} (expected to fail: {xfail_reason})")
+                    xpassed += 1
+                else:
+                    print(f"  PASS: {result}")
+                    passed += 1
             else:
-                print(f"  FAIL: expected {expected}, got {result}")
-                failed += 1
+                if xfail_reason:
+                    print(f"  XFAIL: expected {expected}, got {result} ({xfail_reason})")
+                    xfailed += 1
+                else:
+                    print(f"  FAIL: expected {expected}, got {result}")
+                    failed += 1
         except Exception as e:
-            print(f"  ERROR: {e}")
-            failed += 1
+            if xfail_reason:
+                print(f"  XFAIL: {e} ({xfail_reason})")
+                xfailed += 1
+            else:
+                print(f"  ERROR: {e}")
+                failed += 1
 
     print("\n" + "=" * 50)
-    print(f"Results: {passed} passed, {failed} failed")
+    parts = [f"{passed} passed", f"{failed} failed"]
+    if xfailed:
+        parts.append(f"{xfailed} xfailed")
+    if xpassed:
+        parts.append(f"{xpassed} xpassed")
+    print(f"Results: {', '.join(parts)}")
     sys.exit(0 if failed == 0 else 1)
 
 

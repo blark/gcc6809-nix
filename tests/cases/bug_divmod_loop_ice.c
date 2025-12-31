@@ -1,4 +1,5 @@
 // EXPECT: 21
+// XFAIL: ICE with 32-bit div/mod in loop (pre_dec addressing mode bug)
 // BUG: gcc6809 ICE when compiling 32-bit div/mod in a loop
 // Compiler crashes with "internal compiler error: in extract_insn"
 // This test will fail to compile, not fail at runtime.

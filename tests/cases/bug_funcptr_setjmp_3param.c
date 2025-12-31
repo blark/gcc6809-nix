@@ -1,4 +1,5 @@
 // EXPECT: 42
+// XFAIL: indirect call after setjmp jumps to wrong address
 // BUG: gcc6809 generates wrong code for indirect call after setjmp
 // Conditions: 3+ params, struct pointer dereferences before setjmp,
 // then indirect call through function pointer parameter.
