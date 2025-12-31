@@ -39,6 +39,22 @@ as6809 -o hello.s
 aslink -s -m -w -o hello.s19 -b .text=0x2000 hello.rel -l $M6809_LIBC
 ```
 
+## Running Tests
+
+```bash
+nix develop -c uv run tests/run_tests.py
+```
+
+Runs 18 test cases covering basic operations, 32-bit arithmetic, and regression tests for fixed compiler bugs.
+
+## Patches
+
+This build includes fixes for several m6809 backend bugs. See [patches/README.md](patches/README.md) for details:
+
+- **arm64-darwin.patch** - Fixes for building GCC 4.3.6 on Apple Silicon
+- **indirect-call-fix.patch** - Fixes indirect function calls after setjmp
+- **mulsi3-fix.patch** - Fixes 32-bit multiplication returning 0
+
 ## Platform Support
 
 Currently only supports `aarch64-darwin` (Apple Silicon Macs) due to ARM64-specific patches required to build GCC 4.3.6.
