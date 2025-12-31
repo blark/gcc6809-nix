@@ -49,7 +49,7 @@
               sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
             };
 
-            patches = [ ./patches/arm64-darwin.patch ./patches/indirect-call-fix.patch ./patches/mulsi3-fix.patch ];
+            patches = [ ./patches/arm64-darwin.patch ./patches/mulsi3-fix.patch ];
 
             # gcc12 required because macOS clang can't build GCC
             nativeBuildInputs = with pkgs; [
