@@ -20,3 +20,10 @@ SOURCES.md
 # Vendored sources (now fetched by Nix)
 vendor/
 *.s
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
