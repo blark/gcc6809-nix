@@ -177,7 +177,10 @@
               sha256 = "0ra4kvyifzkk0yb4vag2frdzd8fa6npq2m6xgnjd2nccsc162jf4";
             };
 
-            patches = [ ./patches/newlib-m6809.patch ];
+            patches = [
+              ./patches/newlib-m6809.patch
+              ./patches/newlib-longjmp-zero.patch
+            ];
 
             # gcc12 needed for host tools used during build
             nativeBuildInputs = [ gcc6809 pkgs.gnumake pkgs.gcc12 pkgs.texinfo ];

@@ -48,18 +48,22 @@ nix develop -c uv run tests/run_tests.py
 
 Every `tests/cases/*.c` is compiled at -O0, -Os and -O2, run on the MC6809
 emulator, and its result compared with the file's `// EXPECT:` comment. The
-cases cover basic operations, 32-bit arithmetic and arguments, indirect calls
-and regression tests for fixed compiler bugs. `GCC6809_OPT="-Os"` limits the
-optimization levels, `GCC6809_TOOLCHAIN=/path` picks another toolchain.
+cases cover basic operations, 32-bit arithmetic and arguments, indirect calls,
+setjmp/longjmp and regression tests for fixed compiler and libc bugs.
+`GCC6809_OPT="-Os"` limits the optimization levels, `GCC6809_TOOLCHAIN=/path`
+picks another toolchain. `tests/review/run_longjmp_review.py --exhaustive`
+additionally runs libc's `_longjmp` for every 16-bit `val`.
 
 ## Patches
 
-This build includes fixes for several m6809 backend bugs. See [patches/README.md](patches/README.md) for details:
+This build includes fixes for several m6809 backend and libc bugs. See [patches/README.md](patches/README.md) for details:
 
 - **arm64-darwin.patch** - Fixes for building GCC 4.3.6 on Apple Silicon
 - **mulsi3-fix.patch** - Fixes 32-bit multiplication returning 0
 - **movsi-fix.patch** - Long arguments were pushed with their words swapped; 32-bit constants crashed the compiler
 - **indirect-call-stack-offset.patch** - Indirect calls with pushed arguments used a stale stack offset
+- **newlib-m6809.patch** - The m6809 port of newlib 1.15.0
+- **newlib-longjmp-zero.patch** - `longjmp(env, 0)` now returns 1 from `setjmp` (C99 7.13.2.1)
 
 ## Platform Support
 

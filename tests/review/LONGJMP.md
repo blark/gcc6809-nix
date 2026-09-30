@@ -5,10 +5,18 @@ Base: `bc0cbbc`, using GCC source
 
 ## Scope and status
 
-This proposal fixes only `longjmp(env, 0)` in the m6809 newlib port. It does
-not change GCC or its host-side ARM64 patches. The candidate patch is **not
-enabled in flake.nix**. These review tests are outside `tests/cases`, pending
-independent review and integration.
+This fix changes only `longjmp(env, 0)` in the m6809 newlib port. It does
+not change GCC or its host-side ARM64 patches.
+
+**Integrated** after independent review: `patches/newlib-longjmp-zero.patch`
+is applied by the newlib derivation in `flake.nix`, and the three C cases
+now live in `tests/cases/longjmp_*.c`, so `nix run .#test` covers them.
+`run_longjmp_review.py` remains for the exhaustive `_longjmp` ABI check.
+The rest of this file is the review record; where it says the patch is
+"not enabled" or the tests are "outside tests/cases", that describes the
+state at review time. To reproduce the baseline failure today, build newlib
+with the patch removed and pass it via `--newlib`, then run the same
+commands.
 
 ## Bug and proposed fix
 

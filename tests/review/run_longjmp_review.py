@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Run review regressions using the existing MC6809 test harness.
+"""Run the longjmp regressions plus an exhaustive ABI check of _longjmp.
 
-Dependencies: the same Python environment as tests/run_tests.py.
-See LONGJMP.md here for baseline and candidate build commands.
+The C cases live in tests/cases (longjmp_*.c) and are part of the normal
+suite; this runner adds --exhaustive, which links the real _longjmp from
+libc and executes it for every 16-bit val. Dependencies: the same Python
+environment as tests/run_tests.py. See LONGJMP.md here for the history and
+for building a libc without the fix to reproduce the baseline failure.
 """
 
 import argparse
@@ -105,9 +108,8 @@ def main():
         root = args.newlib.resolve() / "m6809-unknown-none"
         runner.libc = str(root / "lib/libc.a")
         runner.cflags = "-I" + str(root / "include")
-    cases = sorted(HERE.glob("longjmp_*.c"))
-    if args.include_suite:
-        cases += sorted((HERE.parent / "cases").glob("*.c"))
+    cases_dir = HERE.parent / "cases"
+    cases = sorted(cases_dir.glob("*.c" if args.include_suite else "longjmp_*.c"))
     passed = failed = 0
     for case in cases:
         expected = harness.parse_expect(case.read_text())

@@ -168,3 +168,50 @@ The assembly implementation follows the m6809 ABI:
   as movsi-fix.patch now pushes them; the first version of this file read them
   in the swapped order the buggy compiler produced)
 - Result written to the sret pointer with high word at offset 0, low word at offset 2
+
+---
+
+# newlib-m6809.patch
+
+Brian Dominy's m6809 port of newlib 1.15.0 (`newlib/libc/machine/m6809`,
+`libgloss/m6809`, build script `build/newlib.6809`). Hand-written assembly:
+`setjmp.S` only; everything else is C.
+
+---
+
+# newlib-longjmp-zero.patch
+
+`longjmp(env, 0)` now makes `setjmp` return 1, as C99 7.13.2.1p4 requires.
+
+## Problem
+
+**File:** `newlib/libc/machine/m6809/setjmp.S`
+
+`_longjmp` loaded `val` from the stack (`ldd 2,s`) and returned it in X
+unchanged, so `longjmp(env, 0)` made `setjmp` return 0 a second time and
+`if (setjmp(env) == 0) { ... longjmp(env, 0); }` re-entered its first-time
+path.
+
+## Fix
+
+Right after `ldd 2,s`:
+
+```asm
+	bne longjmp_value_ready
+	ldd #1                ; ISO C: longjmp(env, 0) returns 1
+longjmp_value_ready:
+```
+
+`LDD` sets Z from the full 16-bit value, so every nonzero `val` (including
+`0x0100` and `0x00FF`) is unchanged. D is the only register touched, CC is
+restored from the jump buffer afterwards, and the jump-buffer layout, the
+calling convention and the rest of the routine are the same. `_longjmp`
+grows by 5 bytes (58 to 63 bytes for the module). `bne` + `incb` would do
+the same in 3 bytes (D == 0 implies B == 0); the `ldd #1` form was kept as
+reviewed for readability.
+
+Tests: `tests/cases/longjmp_zero.c`, `longjmp_values.c`, `longjmp_nested.c`
+(all fail with the old libc at every optimization level), plus
+`tests/review/run_longjmp_review.py --exhaustive`, which runs the linked
+`_longjmp` for all 65,536 values of `val` and checks X, Y, U, S, DP, CC and
+PC. Review record: `tests/review/LONGJMP.md`.
