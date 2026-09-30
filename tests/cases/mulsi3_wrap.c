@@ -1,0 +1,90 @@
+// EXPECT: 0
+// 32-bit multiply (libgcc1.s ___mulsi3) with products that overflow 32
+// bits.  Both operands are unsigned long, so C defines the result as the
+// product modulo 2^32; no signed-overflow behaviour is relied on.  Covers
+// 0, 1, 0xFFFFFFFF, powers of two whose product needs 31..63 bits, 0xFFFF
+// and 0x10000 squared (the 16x16 partial products carry into and past the
+// high word), operands with the top bit of every byte set, and byte
+// patterns that exercise each of the four partial products in the helper.
+// Expected values were computed on the host (Python: (u * v) & 0xFFFFFFFF),
+// not with this toolchain.  Returns 0, or the 1-based index of the first
+// table entry whose product is wrong.  Broader coverage lives in
+// tests/review/run_mulsi3_review.py.
+
+static const struct { unsigned long u, v, p; } cases[] = {
+    { 0x00000000UL, 0x00000000UL, 0x00000000UL },
+    { 0x00000000UL, 0xFFFFFFFFUL, 0x00000000UL },
+    { 0xFFFFFFFFUL, 0x00000000UL, 0x00000000UL },
+    { 0x00000001UL, 0xFFFFFFFFUL, 0xFFFFFFFFUL },
+    { 0xFFFFFFFFUL, 0x00000001UL, 0xFFFFFFFFUL },
+    { 0xFFFFFFFFUL, 0xFFFFFFFFUL, 0x00000001UL },
+    { 0xFFFFFFFFUL, 0x00000002UL, 0xFFFFFFFEUL },
+    { 0x00000002UL, 0xFFFFFFFFUL, 0xFFFFFFFEUL },
+    { 0xFFFFFFFFUL, 0xFFFFFFFEUL, 0x00000002UL },
+    { 0x80000000UL, 0x00000002UL, 0x00000000UL },
+    { 0x80000000UL, 0x00000003UL, 0x80000000UL },
+    { 0x80000000UL, 0x80000000UL, 0x00000000UL },
+    { 0x7FFFFFFFUL, 0x7FFFFFFFUL, 0x00000001UL },
+    { 0x7FFFFFFFUL, 0x00000002UL, 0xFFFFFFFEUL },
+    { 0x7FFFFFFFUL, 0x80000000UL, 0x80000000UL },
+    { 0x0000FFFFUL, 0x0000FFFFUL, 0xFFFE0001UL },
+    { 0x0000FFFFUL, 0x00010001UL, 0xFFFFFFFFUL },
+    { 0x00010000UL, 0x00010000UL, 0x00000000UL },
+    { 0x00010000UL, 0x0000FFFFUL, 0xFFFF0000UL },
+    { 0x00010001UL, 0x00010001UL, 0x00020001UL },
+    { 0xFFFF0000UL, 0xFFFF0000UL, 0x00000000UL },
+    { 0xFFFF0000UL, 0x0000FFFFUL, 0x00010000UL },
+    { 0x00FF00FFUL, 0x00FF00FFUL, 0xFC02FE01UL },
+    { 0xFF00FF00UL, 0x00FF00FFUL, 0x02FE0100UL },
+    { 0x01010101UL, 0x000000FFUL, 0xFFFFFFFFUL },
+    { 0x80808080UL, 0x80808080UL, 0xC0804000UL },
+    { 0xDEADBEEFUL, 0xCAFEBABEUL, 0x88CF5B62UL },
+    { 0x12345678UL, 0x9ABCDEF0UL, 0x242D2080UL },
+    { 0x9ABCDEF0UL, 0x12345678UL, 0x242D2080UL },
+    { 0x12345678UL, 0x12345678UL, 0x1DF4D840UL },
+    { 0xFFFFFFFEUL, 0xFFFFFFFEUL, 0x00000004UL },
+    { 0x80000001UL, 0x80000001UL, 0x00000001UL },
+    { 0x0000FFFFUL, 0xFFFF0000UL, 0x00010000UL },
+    { 0x40000000UL, 0x00000004UL, 0x00000000UL },
+    { 0x40000000UL, 0x00000003UL, 0xC0000000UL },
+    { 0x20000000UL, 0x00000008UL, 0x00000000UL },
+    { 0x00010000UL, 0x00008000UL, 0x80000000UL },
+    { 0x00008000UL, 0x00008000UL, 0x40000000UL },
+    { 0x00008000UL, 0x00020000UL, 0x00000000UL },
+    { 0x000000FFUL, 0x01010101UL, 0xFFFFFFFFUL },
+    { 0x00007FFFUL, 0x00007FFFUL, 0x3FFF0001UL },
+    { 0x00007FFFUL, 0x00008001UL, 0x3FFFFFFFUL },
+    { 0x00000100UL, 0x01000000UL, 0x00000000UL },
+    { 0x00000100UL, 0x00800000UL, 0x80000000UL },
+    { 0x00000101UL, 0x0FF0FF0FUL, 0x00F00E0FUL },
+    { 0xAAAAAAAAUL, 0x55555555UL, 0x71C71C72UL },
+    { 0xAAAAAAAAUL, 0xAAAAAAAAUL, 0xE38E38E4UL },
+    { 0x55555555UL, 0x55555555UL, 0x38E38E39UL },
+    { 0xFFFFFFFFUL, 0x7FFFFFFFUL, 0x80000001UL },
+    { 0x00000003UL, 0x55555555UL, 0xFFFFFFFFUL },
+    { 0x00000007UL, 0x24924925UL, 0x00000003UL },
+    { 0x00010001UL, 0x0000FFFFUL, 0xFFFFFFFFUL },
+    { 0x12345678UL, 0x00000000UL, 0x00000000UL },
+    { 0x12345678UL, 0x00000001UL, 0x12345678UL },
+    { 0x12345678UL, 0x00010000UL, 0x56780000UL },
+    { 0x12345678UL, 0x00000100UL, 0x34567800UL },
+    { 0x12345678UL, 0x01000000UL, 0x78000000UL },
+    { 0x12345678UL, 0x80000000UL, 0x00000000UL },
+    { 0x00008000UL, 0x00010000UL, 0x80000000UL },
+    { 0x00010000UL, 0x00020000UL, 0x00000000UL },
+    { 0x00000001UL, 0x80000000UL, 0x80000000UL },
+    { 0x01000000UL, 0x00000100UL, 0x00000000UL },
+    { 0x00800000UL, 0x00000200UL, 0x00000000UL },
+};
+
+int main(void)
+{
+    unsigned int i;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        volatile unsigned long u = cases[i].u;
+        volatile unsigned long v = cases[i].v;
+        if (u * v != cases[i].p)
+            return (int)i + 1;
+    }
+    return 0;
+}
