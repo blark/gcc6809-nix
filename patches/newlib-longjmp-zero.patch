@@ -1,0 +1,13 @@
+--- a/newlib/libc/machine/m6809/setjmp.S
++++ b/newlib/libc/machine/m6809/setjmp.S
+@@ -84,6 +84,10 @@
+ 	;-----------------------------------------------
+                          ; X = env
+ 	ldd 2,s               ; D = return value
++	bne longjmp_value_ready
++	ldd #1                ; ISO C: longjmp(env, 0) returns 1
++longjmp_value_ready:
++	; D holds the nonzero return value; X and S are unchanged.
+ 
+ 	;---------------------------------------------------------
+ 	; TODO : storing the return value and then reloading it
