@@ -1,4 +1,4 @@
-# Review proposal: m6809 longjmp zero return
+# Review record: m6809 longjmp zero return
 
 Base: `bc0cbbc`, using GCC source
 `e401b3bc8b7a100218185683e7d36c100ef9d4b6` and newlib 1.15.0.
@@ -12,11 +12,9 @@ not change GCC or its host-side ARM64 patches.
 is applied by the newlib derivation in `flake.nix`, and the three C cases
 now live in `tests/cases/longjmp_*.c`, so `nix run .#test` covers them.
 `run_longjmp_review.py` remains for the exhaustive `_longjmp` ABI check.
-The rest of this file is the review record; where it says the patch is
-"not enabled" or the tests are "outside tests/cases", that describes the
-state at review time. To reproduce the baseline failure today, build newlib
-with the patch removed and pass it via `--newlib`, then run the same
-commands.
+The rest of this file is the review record; "baseline" means the libc
+without the fix, which the reproduction section below builds by filtering
+the patch out of the merged package.
 
 ## Bug and proposed fix
 
@@ -73,8 +71,8 @@ same baseline compiler for both library variants:
 
 | Configuration | Original 52 cases | New 3 cases | Exhaustive longjmp |
 |---|---:|---:|---:|
-| Baseline libc | 260 pass | 15 fail | 65,535 pass, 1 fail |
-| Candidate libc | 260 pass | 15 pass | 65,536 pass |
+| Baseline libc (without the patch) | 260 pass | 15 fail | 65,535 pass, 1 fail |
+| Fixed libc (as merged) | 260 pass | 15 pass | 65,536 pass |
 
 C optimization levels: `-O0 -O1 -Os -O2 -O3`.
 All three new cases return 0 before the fix and 1 afterward, at every level.
@@ -88,22 +86,28 @@ calling conventions is unchanged.
 
 ## Reproduce without modifying the flake
 
-Use a clean checkout of this branch on macOS ARM64. Run from the repository
-root in bash or another POSIX shell. Allow **at least 600 seconds** per build.
-The absolute local flake reference needs `--impure`; inputs remain pinned
-and `--no-write-lock-file` prevents lock changes.
+The merged flake already applies the fix, so the fixed toolchain is plain
+`.#toolchain`. The broken baseline is the same newlib package with
+`newlib-longjmp-zero.patch` filtered out of its patch list; the compiler is
+the same for both. Use a clean checkout of `main` on macOS ARM64. Run from
+the repository root in bash or another POSIX shell. Allow **at least 600
+seconds** per build. The absolute local flake reference needs `--impure`;
+inputs remain pinned and `--no-write-lock-file` prevents lock changes.
 
 ```sh
 root="$PWD"
 work="$(mktemp -d /tmp/gcc6809-longjmp-review.XXXXXX)"
 ro='--no-write-lock-file --option allow-import-from-derivation false'
 
-nix build $ro --out-link "$work/base" .#toolchain
+# Fixed toolchain: the flake as merged.
+nix build $ro --out-link "$work/fixed" .#toolchain
 
-nix build $ro --impure --out-link "$work/newlib" --expr "
+# Broken baseline: the merged newlib package without the fix.
+nix build $ro --impure --out-link "$work/baseline" --expr "
   let f = builtins.getFlake \"$root\"; in
   f.packages.aarch64-darwin.newlib-m6809.overrideAttrs (old: {
-    patches = old.patches ++ [ $root/patches/newlib-longjmp-zero.patch ];
+    patches = builtins.filter
+      (p: baseNameOf p != \"newlib-longjmp-zero.patch\") old.patches;
   })"
 
 nix build $ro --impure --out-link "$work/python" --expr "
@@ -111,29 +115,30 @@ nix build $ro --impure --out-link "$work/python" --expr "
       pkgs = f.inputs.nixpkgs.legacyPackages.aarch64-darwin;
   in pkgs.python3.withPackages (_: [ f.packages.aarch64-darwin.mc6809 ])"
 
-export GCC6809_TOOLCHAIN="$work/base"
+export GCC6809_TOOLCHAIN="$work/fixed"
 export GCC6809_OPT='-O0 -O1 -Os -O2 -O3'
 unset M6809_LIBC M6809_CFLAGS
 
-# Expected exit 1: 15 C failures and the exhaustive val=0 failure.
+# Baseline. Expected exit 1: the 15 longjmp_* C failures (260 other passes)
+# and the exhaustive val=0 failure (65,535/65,536).
+"$work/python/bin/python3" -B tests/review/run_longjmp_review.py \
+  --newlib "$work/baseline" --include-suite --exhaustive
+
+# Fixed. Expected exit 0: 275 C passes and 65,536/65,536 exhaustive passes.
 "$work/python/bin/python3" -B tests/review/run_longjmp_review.py \
   --include-suite --exhaustive
-
-# Expected exit 0: 275 C passes and 65,536 exhaustive passes.
-"$work/python/bin/python3" -B tests/review/run_longjmp_review.py \
-  --newlib "$work/newlib" --include-suite --exhaustive
 ```
 
 The baseline command intentionally exits nonzero; do not chain it to the
-candidate command with `&&` or let `set -e` stop the review there.
+fixed command with `&&` or let `set -e` stop the review there.
 
-## Integration proposal, after approval
+## Integration (done)
 
-1. Add `patches/newlib-longjmp-zero.patch` after `newlib-m6809.patch` in the
-   newlib derivation's patch list.
-2. Move the three `longjmp_*.c` files into `tests/cases` for routine execution
-   through `nix run .#test`.
-3. Adjust the review runner's discovery if keeping it after that move, so it
-   does not lose or duplicate the new cases. Retain the exhaustive ABI check.
+1. `patches/newlib-longjmp-zero.patch` is applied after `newlib-m6809.patch`
+   in the newlib derivation's patch list (`flake.nix`).
+2. The three `longjmp_*.c` files are in `tests/cases` and run through
+   `nix run .#test`.
+3. `run_longjmp_review.py` discovers them there and keeps the exhaustive ABI
+   check.
 
-Do not combine this library fix with unrelated GCC changes.
+The library fix was not combined with unrelated GCC changes.
