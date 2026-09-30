@@ -89,13 +89,13 @@ built from `043e30e`:
 
 | Check | Result |
 |---|---:|
-| `tests/run_tests.py divmod` (5 cases x 3 levels) | 15 pass |
+| `tests/run_tests.py divmod` (4 cases x 3 levels) | 12 pass |
 | `run_divmod_review.py` sweep (68 helper/divisor pairs x 65,536) | 4,456,448 pass |
 | divide by zero -> `_abort` | 262,144 pass |
 | `_seuclid`/`_euclid` direct, edge dividends | 590 pass |
 
-The full script takes about 200 s on 8 processes; `--quick` runs 10
-helper/divisor pairs and `--divisors` picks them explicitly.
+The full script takes about 200 s on 8 processes; `--quick` runs 20
+helper/divisor pairs (1,310,720 calls) and `--divisors` picks them explicitly.
 
 Limitations: emulator execution, not hardware; the default ABI only (the
 `mdret` multilib's `libgcc.a` was not run); the sweep is exhaustive in the
