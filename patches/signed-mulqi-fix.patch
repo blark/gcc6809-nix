@@ -1,0 +1,22 @@
+Do not use the unsigned 6809 MUL instruction for signed widening products.
+Drop the invalid mulqihi3 pattern so GCC widens operands and uses ordinary
+HImode multiplication instead. Keep the zero-extending umulqihi3 pattern.
+Regression: tests/cases/mulqihi3_signed.c and run_signed_mul_review.py.
+
+--- a/gcc/config/m6809/m6809.md
++++ b/gcc/config/m6809/m6809.md
+@@ -956,12 +956,3 @@
+-; TODO - merge these two instructions, using 'extend_operator' to match
+-; either signed or zero extension.  Everything else is the same.
+-(define_insn "mulqihi3"
+-   [(set (match_operand:HI 0 "register_operand" "=d")
+-      (mult:HI (sign_extend:HI (match_operand:QI 1 "general_operand" "%q"))
+-      (match_operand:QI 2 "general_operand" "tmK")))]
+-  ""
+-  "lda\t%2\t;mulqihi3\;mul"
+-  [(set_attr "length" "3")])
+-
+-
++; MUL is unsigned. Signed byte operands must widen before HI multiplication;
++; only the zero-extending pattern can use this instruction directly.
+ (define_insn "umulqihi3"

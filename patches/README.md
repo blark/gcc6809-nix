@@ -215,3 +215,20 @@ Tests: `tests/cases/longjmp_zero.c`, `longjmp_values.c`, `longjmp_nested.c`
 `tests/review/run_longjmp_review.py --exhaustive`, which runs the linked
 `_longjmp` for all 65,536 values of `val` and checks X, Y, U, S, DP, CC and
 PC. Review record: `tests/review/LONGJMP.md`.
+
+---
+
+# signed-mulqi-fix.patch
+
+Removes the invalid signed `mulqihi3` pattern from `gcc/config/m6809/m6809.md`.
+The 6809 `MUL` instruction is unsigned: selecting it for signed byte products
+made `(-1) * (-1)` return `0xfe01` instead of 1. GCC now widens signed
+operands before HImode multiplication. The unsigned `umulqihi3` pattern,
+runtime helpers and ABI are unchanged.
+
+The compiled regression is `tests/cases/mulqihi3_signed.c`, now without XFAIL.
+`tests/review/run_signed_mul_review.py --exhaustive` checks all byte pairs
+in four signedness combinations, plus constant multipliers, at five
+optimization levels. Use the separately corrected MC6809 emulator so its
+old `SEX` defect cannot mask compiler results. Evidence and reproduction:
+`tests/review/SIGNED_MUL.md`.

@@ -1,5 +1,5 @@
 // EXPECT: 0
-// XFAIL: gcc6809-6d6: signed widening multiplication selects unsigned MUL
+// Regression for gcc6809-6d6: signed widening must not select unsigned MUL.
 // All signed products fit in the target's 16-bit int. Unsigned-byte
 // multiplication explicitly promotes to unsigned int to avoid signed overflow.
 // Golden products are host-computed constants, not target-side multiplication.
