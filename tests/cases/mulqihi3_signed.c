@@ -1,24 +1,156 @@
 // EXPECT: 0
-// XFAIL: mulqihi3 in m6809.md multiplies sign-extended chars with the unsigned MUL instruction
-// signed char * signed char with a negative operand.  At -Os and -O2 GCC
-// matches the mulqihi3 pattern, "lda %2; mul", but MUL is unsigned, so
-// (-1) * (-1) yields 255 * 255 = 0xFE01 instead of 1.  At -O0 the operands
-// are sign-extended with SEX and _mulhi3 is called, which is correct code;
-// it still fails on the MC6809 0.6.0 emulator because its SEX does not
-// set A for a negative B (gcc6809-877).  Returns 0, or the number of the
-// first failing check.
-
+// XFAIL: gcc6809-6d6: signed widening multiplication selects unsigned MUL
+// All signed products fit in the target's 16-bit int. Unsigned-byte
+// multiplication explicitly promotes to unsigned int to avoid signed overflow.
+// Golden products are host-computed constants, not target-side multiplication.
+// Use the SEX-corrected emulator (gcc6809-877) to isolate compiler failures.
 #define NOINLINE __attribute__((noinline))
+NOINLINE int mulqi_ss(signed char a, signed char b) { return a * b; }
+NOINLINE int mulqi_su(signed char a, unsigned char b) { return a * b; }
+NOINLINE int mulqi_us(unsigned char a, signed char b) { return a * b; }
+NOINLINE unsigned int mulqi_uu(unsigned char a, unsigned char b)
+{ return (unsigned int)a * b; }
+NOINLINE int mulqi_3(signed char a) { return a * 3; }
+NOINLINE int mulqi_neg3(signed char a) { return a * -3; }
+NOINLINE int mulqi_255(signed char a) { return a * 255; }
+NOINLINE int mulqi_256(signed char a) { return a * 256; }
 
-NOINLINE int mulqi(signed char a, signed char b) { return a * b; }
-NOINLINE int mulqi_const(signed char a) { return a * 3; }
-
+static const struct {
+    signed char a, b;
+    unsigned char u, v;
+    int ss, su, us;
+    unsigned int uu;
+} pairs[] = {
+    {0, 0, 0, 0, 0, 0, 0, 0U},
+    {0, 1, 0, 1, 0, 0, 0, 0U},
+    {0, 2, 0, 2, 0, 0, 0, 0U},
+    {0, 3, 0, 3, 0, 0, 0, 0U},
+    {0, 127, 0, 127, 0, 0, 0, 0U},
+    {0, -128, 0, 128, 0, 0, 0, 0U},
+    {0, -127, 0, 129, 0, 0, 0, 0U},
+    {0, -3, 0, 253, 0, 0, 0, 0U},
+    {0, -2, 0, 254, 0, 0, 0, 0U},
+    {0, -1, 0, 255, 0, 0, 0, 0U},
+    {1, 0, 1, 0, 0, 0, 0, 0U},
+    {1, 1, 1, 1, 1, 1, 1, 1U},
+    {1, 2, 1, 2, 2, 2, 2, 2U},
+    {1, 3, 1, 3, 3, 3, 3, 3U},
+    {1, 127, 1, 127, 127, 127, 127, 127U},
+    {1, -128, 1, 128, -128, 128, -128, 128U},
+    {1, -127, 1, 129, -127, 129, -127, 129U},
+    {1, -3, 1, 253, -3, 253, -3, 253U},
+    {1, -2, 1, 254, -2, 254, -2, 254U},
+    {1, -1, 1, 255, -1, 255, -1, 255U},
+    {2, 0, 2, 0, 0, 0, 0, 0U},
+    {2, 1, 2, 1, 2, 2, 2, 2U},
+    {2, 2, 2, 2, 4, 4, 4, 4U},
+    {2, 3, 2, 3, 6, 6, 6, 6U},
+    {2, 127, 2, 127, 254, 254, 254, 254U},
+    {2, -128, 2, 128, -256, 256, -256, 256U},
+    {2, -127, 2, 129, -254, 258, -254, 258U},
+    {2, -3, 2, 253, -6, 506, -6, 506U},
+    {2, -2, 2, 254, -4, 508, -4, 508U},
+    {2, -1, 2, 255, -2, 510, -2, 510U},
+    {3, 0, 3, 0, 0, 0, 0, 0U},
+    {3, 1, 3, 1, 3, 3, 3, 3U},
+    {3, 2, 3, 2, 6, 6, 6, 6U},
+    {3, 3, 3, 3, 9, 9, 9, 9U},
+    {3, 127, 3, 127, 381, 381, 381, 381U},
+    {3, -128, 3, 128, -384, 384, -384, 384U},
+    {3, -127, 3, 129, -381, 387, -381, 387U},
+    {3, -3, 3, 253, -9, 759, -9, 759U},
+    {3, -2, 3, 254, -6, 762, -6, 762U},
+    {3, -1, 3, 255, -3, 765, -3, 765U},
+    {127, 0, 127, 0, 0, 0, 0, 0U},
+    {127, 1, 127, 1, 127, 127, 127, 127U},
+    {127, 2, 127, 2, 254, 254, 254, 254U},
+    {127, 3, 127, 3, 381, 381, 381, 381U},
+    {127, 127, 127, 127, 16129, 16129, 16129, 16129U},
+    {127, -128, 127, 128, -16256, 16256, -16256, 16256U},
+    {127, -127, 127, 129, -16129, 16383, -16129, 16383U},
+    {127, -3, 127, 253, -381, 32131, -381, 32131U},
+    {127, -2, 127, 254, -254, 32258, -254, 32258U},
+    {127, -1, 127, 255, -127, 32385, -127, 32385U},
+    {-128, 0, 128, 0, 0, 0, 0, 0U},
+    {-128, 1, 128, 1, -128, -128, 128, 128U},
+    {-128, 2, 128, 2, -256, -256, 256, 256U},
+    {-128, 3, 128, 3, -384, -384, 384, 384U},
+    {-128, 127, 128, 127, -16256, -16256, 16256, 16256U},
+    {-128, -128, 128, 128, 16384, -16384, -16384, 16384U},
+    {-128, -127, 128, 129, 16256, -16512, -16256, 16512U},
+    {-128, -3, 128, 253, 384, -32384, -384, 32384U},
+    {-128, -2, 128, 254, 256, -32512, -256, 32512U},
+    {-128, -1, 128, 255, 128, -32640, -128, 32640U},
+    {-127, 0, 129, 0, 0, 0, 0, 0U},
+    {-127, 1, 129, 1, -127, -127, 129, 129U},
+    {-127, 2, 129, 2, -254, -254, 258, 258U},
+    {-127, 3, 129, 3, -381, -381, 387, 387U},
+    {-127, 127, 129, 127, -16129, -16129, 16383, 16383U},
+    {-127, -128, 129, 128, 16256, -16256, -16512, 16512U},
+    {-127, -127, 129, 129, 16129, -16383, -16383, 16641U},
+    {-127, -3, 129, 253, 381, -32131, -387, 32637U},
+    {-127, -2, 129, 254, 254, -32258, -258, 32766U},
+    {-127, -1, 129, 255, 127, -32385, -129, 32895U},
+    {-3, 0, 253, 0, 0, 0, 0, 0U},
+    {-3, 1, 253, 1, -3, -3, 253, 253U},
+    {-3, 2, 253, 2, -6, -6, 506, 506U},
+    {-3, 3, 253, 3, -9, -9, 759, 759U},
+    {-3, 127, 253, 127, -381, -381, 32131, 32131U},
+    {-3, -128, 253, 128, 384, -384, -32384, 32384U},
+    {-3, -127, 253, 129, 381, -387, -32131, 32637U},
+    {-3, -3, 253, 253, 9, -759, -759, 64009U},
+    {-3, -2, 253, 254, 6, -762, -506, 64262U},
+    {-3, -1, 253, 255, 3, -765, -253, 64515U},
+    {-2, 0, 254, 0, 0, 0, 0, 0U},
+    {-2, 1, 254, 1, -2, -2, 254, 254U},
+    {-2, 2, 254, 2, -4, -4, 508, 508U},
+    {-2, 3, 254, 3, -6, -6, 762, 762U},
+    {-2, 127, 254, 127, -254, -254, 32258, 32258U},
+    {-2, -128, 254, 128, 256, -256, -32512, 32512U},
+    {-2, -127, 254, 129, 254, -258, -32258, 32766U},
+    {-2, -3, 254, 253, 6, -506, -762, 64262U},
+    {-2, -2, 254, 254, 4, -508, -508, 64516U},
+    {-2, -1, 254, 255, 2, -510, -254, 64770U},
+    {-1, 0, 255, 0, 0, 0, 0, 0U},
+    {-1, 1, 255, 1, -1, -1, 255, 255U},
+    {-1, 2, 255, 2, -2, -2, 510, 510U},
+    {-1, 3, 255, 3, -3, -3, 765, 765U},
+    {-1, 127, 255, 127, -127, -127, 32385, 32385U},
+    {-1, -128, 255, 128, 128, -128, -32640, 32640U},
+    {-1, -127, 255, 129, 127, -129, -32385, 32895U},
+    {-1, -3, 255, 253, 3, -253, -765, 64515U},
+    {-1, -2, 255, 254, 2, -254, -510, 64770U},
+    {-1, -1, 255, 255, 1, -255, -255, 65025U},
+};
+static const struct { signed char a; int p3, n3, p255, p256; } constants[] = {
+    {0, 0, 0, 0, 0},
+    {1, 3, -3, 255, 256},
+    {2, 6, -6, 510, 512},
+    {3, 9, -9, 765, 768},
+    {127, 381, -381, 32385, 32512},
+    {-128, -384, 384, -32640, (-32767 - 1)},
+    {-127, -381, 381, -32385, -32512},
+    {-3, -9, 9, -765, -768},
+    {-2, -6, 6, -510, -512},
+    {-1, -3, 3, -255, -256},
+};
 int main(void)
 {
-    if (mulqi(-1, -1) != 1) return 1;
-    if (mulqi(-2, 3) != -6) return 2;
-    if (mulqi_const(-1) != -3) return 3;
-    if (mulqi(100, 100) != 10000) return 4;
-    if (mulqi(-128, -128) != 16384) return 5;
+    unsigned int i;
+    for (i = 0; i < sizeof(pairs) / sizeof(pairs[0]); ++i) {
+        volatile signed char a = pairs[i].a, b = pairs[i].b;
+        volatile unsigned char u = pairs[i].u, v = pairs[i].v;
+        if (mulqi_ss(a, b) != pairs[i].ss) return 1 + i;
+        if (mulqi_su(a, v) != pairs[i].su) return 101 + i;
+        if (mulqi_us(u, b) != pairs[i].us) return 201 + i;
+        if (mulqi_uu(u, v) != pairs[i].uu) return 301 + i;
+    }
+    for (i = 0; i < sizeof(constants) / sizeof(constants[0]); ++i) {
+        volatile signed char a = constants[i].a;
+        if (mulqi_3(a) != constants[i].p3) return 401 + i;
+        if (mulqi_neg3(a) != constants[i].n3) return 411 + i;
+        if (mulqi_255(a) != constants[i].p255) return 421 + i;
+        if (mulqi_256(a) != constants[i].p256) return 431 + i;
+    }
     return 0;
 }
