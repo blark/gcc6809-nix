@@ -69,7 +69,7 @@ No changes to the shared test runner or compiler are needed.
 ## Reproduced emulator defect (`gcc6809-877`)
 
 The pinned **MC6809 0.6.0** `instruction_SEX` clears A for nonnegative B,
- but omits setting A to `0xff` for negative B. A trace of the linked
+but omits setting A to `0xff` for negative B. A trace of the linked
 `___ashrsi3` shows D=`0x8080` unchanged after opcode `0x1d`, when it must
 be `0xff80`. Consequently correct compiler output appears to return
 `0x80ff8000` for arithmetic `0x80000000 >> 16`, rather than `0xffff8000`.
@@ -86,8 +86,27 @@ Unmodified emulator, unchanged toolchain:
 
 The five C failures are all `bit_shift32_edges`; the helper failures are
 all arithmetic right shifts of negative values at valid counts 16–31.
-Tests are deliberately not marked XFAIL: an emulator-only fix follows
-in a separate commit. The compiler and target libraries stay unchanged.
+Tests were committed first, without XFAIL markers. The separate fix applies
+`patches/mc6809-sex-negative.patch` only to the Nix emulator package. It
+adds the missing negative branch; the compiler and target libraries stay
+unchanged.
+
+With the patched emulator and the same compiler/archive:
+
+| Check | Result |
+|---|---:|
+| Full C suite, `-O0 -O1 -O2 -O3 -Os` | **290 pass, 0 fail** |
+| Direct helper matrix plus exhaustive sweeps | **1,001,762 pass, 0 fail** |
+| Raw SEX opcode, all D inputs | **65,536 pass, 0 fail** |
+| Existing exhaustive longjmp review | **65,536 pass, 0 fail** |
+
+The full C result was also verified through `nix run .#test`, exercising
+the normal emulator wiring rather than just the standalone Python environment.
+
+Independent review reran the Nix all-system evaluation check, emulator
+build, raw SEX test, and all 15 new C/optimization combinations. No
+introduced defects found. Existing flake formatting debt was left alone;
+`flake.lock` is unchanged.
 
 ## Reproduce
 
@@ -97,9 +116,9 @@ The review scripts are separate from the normal C test discovery.
 
 ```sh
 root="$PWD"
-system="$(nix eval --impure --raw --expr builtins.currentSystem)"
-work="$(mktemp -d /tmp/gcc6809-bits.XXXXXX)"
 ro='--no-write-lock-file --option allow-import-from-derivation false'
+system="$(nix eval $ro --impure --raw --expr builtins.currentSystem)"
+work="$(mktemp -d /tmp/gcc6809-bits.XXXXXX)"
 nix build $ro --out-link "$work/toolchain" .#toolchain
 nix build $ro --impure --out-link "$work/python" --expr "
   let f = builtins.getFlake \"$root\";
@@ -115,5 +134,23 @@ unset M6809_LIBC M6809_CFLAGS
 "$work/python/bin/python3" -B tests/review/run_bit_helpers.py --characterize-overshifts
 ```
 
-The baseline checks above intentionally exit nonzero. These results are
-emulator evidence, not physical-hardware validation.
+The commands above should pass with the fix. To reproduce the broken
+baseline without changing the compiler, libraries, or checkout:
+
+```sh
+nix build $ro --impure --out-link "$work/python-baseline" --expr "
+  let f = builtins.getFlake \"$root\";
+      pkgs = f.inputs.nixpkgs.legacyPackages.$system;
+      emulator = f.packages.$system.mc6809.overrideAttrs (old: {
+        patches = builtins.filter
+          (p: baseNameOf p != \"mc6809-sex-negative.patch\") (old.patches or []);
+      });
+  in pkgs.python3.withPackages (_: [ emulator ])"
+"$work/python-baseline/bin/python3" -B tests/review/check_sex_opcode.py
+"$work/python-baseline/bin/python3" -B tests/run_tests.py
+"$work/python-baseline/bin/python3" -B tests/review/run_bit_helpers.py
+```
+
+Those three baseline commands intentionally exit nonzero: do not chain
+them with `&&` or let `set -e` prevent subsequent checks. These results
+are emulator evidence, not physical-hardware validation.
