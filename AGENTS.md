@@ -1,7 +1,7 @@
 # Agent task coordination
 
-Use Beads against the shared homelab Dolt server. This repository's database
-is `gcc6809`. All clones and worktrees must use that same database.
+Use Beads for task tracking when it is configured in your workspace.
+Connection settings and credentials are machine-local and must not be committed.
 
 1. Set a distinct `BEADS_ACTOR` for this agent session.
 2. Check `bd context` and `bd dolt test` before task writes.
@@ -9,16 +9,6 @@ is `gcc6809`. All clones and worktrees must use that same database.
 4. Do not override another agent's active claim. Close completed work with
    `bd close ID` and include the relevant verification results.
 
-One localhost tunnel per machine connects clients to the cluster:
-
-```sh
-kubectl -n beads port-forward --address 127.0.0.1 svc/dolt 3307:3306
-```
-
-The shared password belongs in `~/.config/beads/credentials`, never in this
-repository. See `.beads/README.md` for connection and configuration details.
-
-If the server is unreachable, restore the tunnel; do not initialize a local
-replacement database or run `bd dolt start/stop`. Routine Dolt push/pull is
-unnecessary because agents share one database. Coordinate migrations, GC,
-backup and other server maintenance through one maintainer.
+If Beads is not configured or its connection fails, obtain the local setup
+instructions from the maintainer. Do not initialize a replacement database,
+change the backend, or publish connection details as a workaround.
