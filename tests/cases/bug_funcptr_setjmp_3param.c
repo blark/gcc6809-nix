@@ -1,10 +1,8 @@
 // EXPECT: 42
-// XFAIL: indirect call after setjmp jumps to wrong address
-// BUG: gcc6809 generates wrong code for indirect call after setjmp
-// Conditions: 3+ params, struct pointer dereferences before setjmp,
-// then indirect call through function pointer parameter.
-// Workaround: copy f and ud to volatile locals before setjmp.
-// Crashes with "UNKNOWN OP" - jumps to wrong address.
+// Regression test: indirect call through a function-pointer parameter after
+// setjmp, with 3+ params and struct pointer dereferences before the setjmp.
+// The pointer is spilled to the stack, and the call used a stale [n,s]
+// offset once the arguments were pushed (indirect-call-stack-offset.patch).
 #include <setjmp.h>
 
 typedef void (*Pfunc)(void*, void*);

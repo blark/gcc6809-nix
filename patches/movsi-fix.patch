@@ -1,0 +1,187 @@
+--- a/gcc/config/m6809/m6809.md
++++ b/gcc/config/m6809/m6809.md
+@@ -432,103 +432,71 @@
+ ;; SImode (32-bit) move expander.
+ ;; m6809 has no native 32-bit operations, so split into two HImode moves.
+ ;; Big-endian ordering: word 0 is high, word 1 is low.
+-;; CONST_INT has VOIDmode, so must be handled specially.
+ (define_expand "movsi"
+   [(set (match_operand:SI 0 "nonimmediate_operand" "")
+         (match_operand:SI 1 "general_operand" ""))]
+   ""
+ {
++  rtx dst = operands[0], src = operands[1];
+   rtx lo_src, hi_src, lo_dst, hi_dst;
+-
+-  /* Handle CONST_INT specially - it has VOIDmode and can't use subregs */
+-  if (GET_CODE (operands[1]) == CONST_INT)
+-    {
+-      HOST_WIDE_INT val = INTVAL (operands[1]);
+-      /* Big-endian: high word at offset 0, low word at offset 2 */
+-      rtx hi_val = GEN_INT ((val >> 16) & 0xFFFF);
+-      rtx lo_val = GEN_INT (val & 0xFFFF);
++  bool lo_first;
+ 
+-      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
+-      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
+-      if (!hi_dst || !lo_dst)
+-        FAIL;
+-      emit_move_insn (hi_dst, hi_val);
+-      emit_move_insn (lo_dst, lo_val);
+-      DONE;
++  /* Split the source into its two halves.  A constant has VOIDmode and
++     cannot be subreg'd, so split its value instead.  gen_int_mode
++     sign-extends each half into a valid HImode constant; GEN_INT (0xffff)
++     is not one (movhi only recognizes -32768..32767) and made "x = -1L",
++     40000UL and every constant with a half >= 0x8000 an unrecognizable
++     insn.  */
++  if (GET_CODE (src) == CONST_INT || GET_CODE (src) == CONST_DOUBLE)
++    {
++      HOST_WIDE_INT val = (GET_CODE (src) == CONST_INT
++                           ? INTVAL (src) : CONST_DOUBLE_LOW (src));
++      hi_src = gen_int_mode (val >> 16, HImode);
++      lo_src = gen_int_mode (val, HImode);
+     }
+-
+-  /* Handle CONST_DOUBLE for larger constants */
+-  if (GET_CODE (operands[1]) == CONST_DOUBLE)
++  else if (pop_operand (src, SImode))
++    /* Both halves come from the same post-incremented address; the
++       first pop reads the lower address, i.e. the high half.  */
++    hi_src = lo_src = adjust_address (src, HImode, 0);
++  else
+     {
+-      HOST_WIDE_INT val = CONST_DOUBLE_LOW (operands[1]);
+-      rtx hi_val = GEN_INT ((val >> 16) & 0xFFFF);
+-      rtx lo_val = GEN_INT (val & 0xFFFF);
+-
+-      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
+-      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
+-      if (!hi_dst || !lo_dst)
+-        FAIL;
+-      emit_move_insn (hi_dst, hi_val);
+-      emit_move_insn (lo_dst, lo_val);
+-      DONE;
++      hi_src = m6809_si_half (src, 0);
++      lo_src = m6809_si_half (src, 2);
+     }
+ 
+-  /* For all other cases, source should have SImode */
+-  if (GET_MODE (operands[1]) != SImode)
++  if (push_operand (dst, SImode))
++    /* Both halves go through the same pre-decremented address.  The half
++       pushed first ends up at the higher address, so the low half must be
++       pushed first.  Pushing the high half first stored a long argument
++       with its words swapped: callees read the high word from the lower
++       address.  A constant used to fall through to simplify_gen_subreg
++       of the push address, producing (subreg:HI (mem:SI (pre_dec s)) 2),
++       which no insn recognizes.  */
++    hi_dst = lo_dst = adjust_address (dst, HImode, 0);
++  else
+     {
+-      operands[1] = force_reg (SImode, operands[1]);
++      hi_dst = m6809_si_half (dst, 0);
++      lo_dst = m6809_si_half (dst, 2);
+     }
+ 
+-  if (push_operand (operands[0], SImode))
++  if (push_operand (dst, SImode))
++    lo_first = true;
++  else if (pop_operand (src, SImode))
++    lo_first = false;
++  else
++    /* Do not clobber a source half before it has been read.  */
++    lo_first = !reg_overlap_mentioned_p (lo_dst, hi_src);
++
++  if (lo_first)
+     {
+-      /* Stack push: high half first, then low (big-endian) */
+-      hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
+-      lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
+-      if (!hi_src || !lo_src)
+-        FAIL;
+-      emit_move_insn (adjust_address (operands[0], HImode, 0), hi_src);
+-      emit_move_insn (adjust_address (operands[0], HImode, 0), lo_src);
+-      DONE;
++      emit_move_insn (lo_dst, lo_src);
++      emit_move_insn (hi_dst, hi_src);
+     }
+-  else if (pop_operand (operands[1], SImode))
++  else
+     {
+-      /* Stack pop: low half first, then high (big-endian) */
+-      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
+-      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
+-      if (!lo_dst || !hi_dst)
+-        FAIL;
+-      emit_move_insn (lo_dst, adjust_address (operands[1], HImode, 0));
+-      emit_move_insn (hi_dst, adjust_address (operands[1], HImode, 0));
+-      DONE;
+-    }
+-  else if (MEM_P (operands[0]) && MEM_P (operands[1]))
+-    {
+-      /* Mem-to-mem: use HImode temporaries */
+-      rtx tmp_lo, tmp_hi;
+-      lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
+-      hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
+-      lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
+-      hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
+-      if (!lo_src || !hi_src || !lo_dst || !hi_dst)
+-        FAIL;
+-      tmp_lo = gen_reg_rtx (HImode);
+-      tmp_hi = gen_reg_rtx (HImode);
+-      emit_move_insn (tmp_lo, lo_src);
+-      emit_move_insn (tmp_hi, hi_src);
+-      emit_move_insn (lo_dst, tmp_lo);
+-      emit_move_insn (hi_dst, tmp_hi);
+-      DONE;
++      emit_move_insn (hi_dst, hi_src);
++      emit_move_insn (lo_dst, lo_src);
+     }
+-
+-  /* General case: split into two HImode words using simplify_gen_subreg */
+-  lo_dst = simplify_gen_subreg (HImode, operands[0], SImode, 2);
+-  hi_dst = simplify_gen_subreg (HImode, operands[0], SImode, 0);
+-  lo_src = simplify_gen_subreg (HImode, operands[1], SImode, 2);
+-  hi_src = simplify_gen_subreg (HImode, operands[1], SImode, 0);
+-  if (!lo_dst || !hi_dst || !lo_src || !hi_src)
+-    FAIL;
+-  emit_move_insn (lo_dst, lo_src);
+-  emit_move_insn (hi_dst, hi_src);
+   DONE;
+ })
+ 
+--- a/gcc/config/m6809/m6809-protos.h
++++ b/gcc/config/m6809/m6809-protos.h
+@@ -73,6 +73,7 @@
+ rtx               gen_rtx_register_pushpop (int pop_flag, int regs);
+ void              emit_libcall_insns (enum machine_mode mode, const char *name, rtx *operands, int count);
+ const char *      output_branch_insn (enum rtx_code code, rtx *operands, int length);
++rtx               m6809_si_half (rtx x, int off);
+ void              output_call_insn (rtx *operands);
+ void              output_far_call_insn (rtx *operands, int has_return);
+ void              m6809_initialize_trampoline (rtx tramp, rtx fnaddr, rtx cxt);
+--- a/gcc/config/m6809/m6809.c
++++ b/gcc/config/m6809/m6809.c
+@@ -2030,6 +2028,21 @@
+ }
+ 
+ 
++/** Returns the 16-bit half of the 32-bit operand X at byte offset OFF
++ * (0 = high, 2 = low).  A memory operand is addressed directly:
++ * simplify_gen_subreg would leave a (subreg:HI (mem:SI)) for a volatile
++ * memory reference, which no insn recognizes after expand.  The m6809 has
++ * no mode-dependent addresses except auto-increment, which movsi handles
++ * separately as push and pop. */
++rtx
++m6809_si_half (rtx x, int off)
++{
++	if (MEM_P (x))
++		return adjust_address (x, HImode, off);
++	return simplify_gen_subreg (HImode, x, SImode, off);
++}
++
++
+ /** Outputs the assembly language for a call. */
+ void
+ output_call_insn (rtx *operands)

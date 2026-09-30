@@ -49,7 +49,12 @@
               sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
             };
 
-            patches = [ ./patches/arm64-darwin.patch ./patches/mulsi3-fix.patch ];
+            patches = [
+              ./patches/arm64-darwin.patch
+              ./patches/mulsi3-fix.patch
+              ./patches/movsi-fix.patch
+              ./patches/indirect-call-stack-offset.patch
+            ];
 
             # gcc12 required because macOS clang can't build GCC
             nativeBuildInputs = with pkgs; [
@@ -251,14 +256,54 @@
               rev = "e401b3bc8b7a100218185683e7d36c100ef9d4b6";
               sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
             };
-            patches = [ ./patches/arm64-darwin.patch ];
+            patches = gcc6809.patches;
             phases = [ "unpackPhase" "patchPhase" "installPhase" ];
             installPhase = "cp -r . $out";
           };
+          # MC6809 emulator (Python) used by tests/run_tests.py
+          mc6809 = pkgs.python3Packages.buildPythonPackage rec {
+            pname = "MC6809";
+            version = "0.6.0";
+            src = pkgs.fetchPypi {
+              inherit pname version;
+              sha256 = "sha256-Q5DNA+RmMmSR2I33WLIsVWyZJpknWBK820dL41Bgd74=";
+            };
+            pyproject = true;
+            build-system = [ pkgs.python3Packages.poetry-core ];
+            dependencies = [ pkgs.python3Packages.click ];
+            postPatch = ''
+              substituteInPlace pyproject.toml \
+                --replace-fail 'poetry.masonry.api' 'poetry.core.masonry.api' \
+                --replace-fail 'poetry>=0.12' 'poetry-core>=1.0.0'
+            '';
+            doCheck = false;
+            dontCheckRuntimeDeps = true;
+            meta = {
+              description = "MC6809 CPU emulator written in Python";
+              license = pkgs.lib.licenses.gpl3;
+              platforms = pkgs.lib.platforms.unix;
+            };
+          };
+
+          # nix run .#test [pattern]: compile every tests/cases/*.c at -O0, -Os
+          # and -O2 with this toolchain, run it on the emulator, check EXPECT.
+          test-runner = pkgs.writeShellScriptBin "gcc6809-test" ''
+            export GCC6809_TOOLCHAIN="''${GCC6809_TOOLCHAIN:-${toolchain}}"
+            exec ${pkgs.python3.withPackages (_: [ mc6809 ])}/bin/python3 \
+              ${./tests}/run_tests.py "$@"
+          '';
         in {
-          inherit gcc6809 newlib-m6809 toolchain gcc6809-src;
+          inherit gcc6809 newlib-m6809 toolchain gcc6809-src mc6809 test-runner;
           default = toolchain;
         });
+
+      apps = forAllSystems (system: {
+        test = {
+          type = "app";
+          program = "${self.packages.${system}.test-runner}/bin/gcc6809-test";
+          meta.description = "Run the compiler regression suite on the MC6809 emulator";
+        };
+      });
 
       devShells = forAllSystems (system:
         let

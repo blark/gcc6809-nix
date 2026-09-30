@@ -1,8 +1,7 @@
-// EXPECT: 21
-// XFAIL: ICE with 32-bit div/mod in loop (pre_dec addressing mode bug)
-// BUG: gcc6809 ICE when compiling 32-bit div/mod in a loop
-// Compiler crashes with "internal compiler error: in extract_insn"
-// This test will fail to compile, not fail at runtime.
+// EXPECT: 36
+// Regression test: 32-bit div/mod in a loop used to crash the compiler
+// ("unrecognizable insn" with a pre_dec push of a 32-bit constant, fixed by
+// movsi-fix.patch).  1+2+3+4+5+6+7+8 = 36.
 int main(void) {
     long n = 12345678L;
     int sum = 0;
@@ -12,6 +11,5 @@ int main(void) {
         n = n / 10;
     }
 
-    // 1+2+3+4+5+6+7+8 = 36, but compiler crashes before we get there
     return sum;
 }

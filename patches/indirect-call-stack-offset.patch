@@ -1,0 +1,88 @@
+--- a/gcc/reload.c
++++ b/gcc/reload.c
+@@ -209,6 +209,16 @@
+ /* Set to 1 in subst_reg_equivs if it changes anything.  */
+ static int subst_reg_equivs_changed;
+ 
++/* Set to 1 by find_reloads_address when, in a non-final pass, it leaves a
++   pseudo in place as an indirect address although the pseudo's equivalent
++   memory location must be re-eliminated (the stack pointer is not at its
++   initial offset).  find_reloads then reports a change so that the final
++   pass revisits the insn and makes that substitution; otherwise
++   replace_pseudos_in would substitute reg_equiv_mem, whose address holds
++   the initial elimination offset, and the insn would address the wrong
++   stack slot.  */
++static int equiv_mem_needs_replacement;
++
+ /* On return from push_reload, holds the reload-number for the OUT
+    operand, which can be different for that from the input operand.  */
+ static int output_reloadnum;
+@@ -2595,6 +2605,7 @@
+   n_reloads = 0;
+   n_replacements = 0;
+   n_earlyclobbers = 0;
++  equiv_mem_needs_replacement = 0;
+   replace_reloads = replace;
+   hard_regs_live_known = live_known;
+   static_reload_reg_p = reload_reg_p;
+@@ -4536,7 +4547,7 @@
+ 	  }
+       }
+ 
+-  return retval;
++  return retval | equiv_mem_needs_replacement;
+ }
+ 
+ /* Return true if alternative number ALTNUM in constraint-string
+@@ -4872,19 +4883,30 @@
+ 		  /* TEM is not the same as what we'll be replacing the
+ 		     pseudo with after reload, put a USE in front of INSN
+ 		     in the final reload pass.  */
+-		  if (replace_reloads
+-		      && num_not_at_initial_offset
++		  if (num_not_at_initial_offset
+ 		      && ! rtx_equal_p (tem, reg_equiv_mem[regno]))
+ 		    {
+-		      *loc = tem;
+-		      /* We mark the USE with QImode so that we
+-			 recognize it as one that can be safely
+-			 deleted at the end of reload.  */
+-		      PUT_MODE (emit_insn_before (gen_rtx_USE (VOIDmode, ad),
+-						  insn), QImode);
++		      if (replace_reloads)
++			{
++			  *loc = tem;
++			  /* We mark the USE with QImode so that we
++			     recognize it as one that can be safely
++			     deleted at the end of reload.  */
++			  PUT_MODE (emit_insn_before (gen_rtx_USE (VOIDmode,
++								   ad),
++						      insn), QImode);
+ 
+-		      /* This doesn't really count as replacing the address
+-			 as a whole, since it is still a memory access.  */
++			  /* This doesn't really count as replacing the
++			     address as a whole, since it is still a memory
++			     access.  */
++			}
++		      else
++			/* The final pass only reruns find_reloads for insns
++			   that were found to need reloads or operand
++			   changes; make sure it does so here, or the pseudo
++			   ends up replaced by reg_equiv_mem at the initial
++			   offset.  */
++			equiv_mem_needs_replacement = 1;
+ 		    }
+ 		  return 0;
+ 		}
+--- a/gcc/config/m6809/m6809.c
++++ b/gcc/config/m6809/m6809.c
+@@ -394,8 +394,6 @@
+ 
+ 	switch (GET_CODE (addr)) {
+ 		case REG:
+-			if (indirect_flag && ofst != NULL_RTX && INTVAL (ofst))
+-				output_addr_const(file, ofst);
+ 			regno = REGNO (addr);
+ 			fprintf (file, ",%s", reg_names[regno]);
+ 			break;

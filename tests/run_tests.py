@@ -11,7 +11,13 @@ GCC6809 Test Runner
 Discovers and runs .c test files against the MC6809 emulator.
 
 Usage:
+    nix run .#test [pattern]
     nix develop --command uv run tests/run_tests.py [pattern]
+
+Every test is compiled at each optimization level in GCC6809_OPT
+(default "-O0 -Os -O2"), run, and its result compared with the EXPECT
+comment.  GCC6809_TOOLCHAIN selects the toolchain (default: ./result or
+the m6809-unknown-none-gcc on PATH).
 
 Test files should contain an EXPECT comment:
     // EXPECT: 42
@@ -34,6 +40,9 @@ from MC6809.core.configs import BaseConfig
 
 
 CFG_DICT = {"verbosity": None, "trace": None}
+
+OPT_LEVELS = os.environ.get("GCC6809_OPT", "-O0 -Os -O2").split()
+MAX_OPS = int(os.environ.get("GCC6809_MAX_OPS", "2000000"))
 
 
 class Config(BaseConfig):
@@ -111,6 +120,9 @@ def parse_xfail(c_source: str) -> str | None:
 
 def find_toolchain() -> Path | None:
     """Find the gcc6809 toolchain"""
+    env = os.environ.get("GCC6809_TOOLCHAIN")
+    if env:
+        return Path(env)
     result = Path(__file__).parent.parent / "result"
     if result.exists():
         return result
@@ -141,8 +153,9 @@ class GCC6809TestRunner:
         self.cflags = os.environ.get("M6809_CFLAGS",
             "-I" + str(self.toolchain / "m6809-unknown-none" / "include"))
 
-    def compile_and_run(self, c_file: Path, text_addr: int = 0x2000) -> int:
-        """Compile C file and run on emulator, return result"""
+    def compile_and_run(self, c_file: Path, opt: str = "-Os",
+                        text_addr: int = 0x2000) -> int:
+        """Compile C file at optimization level OPT, run on emulator, return result"""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             s_file = tmpdir / "test.s"
@@ -152,7 +165,7 @@ class GCC6809TestRunner:
 
             # Compile
             result = subprocess.run([
-                str(self.gcc), "-Os", "-std=c99", "-S",
+                str(self.gcc), opt, "-std=c99", "-S",
                 *self.cflags.split(), str(c_file), "-o", str(s_file)
             ], capture_output=True, text=True)
             if result.returncode != 0:
@@ -165,11 +178,23 @@ class GCC6809TestRunner:
             if result.returncode != 0:
                 raise RuntimeError(f"Assemble failed:\n{result.stderr}")
 
-            # Link (with libc and libgcc)
+            # abort/_exit stubs (libgcc and newlib call them): jump to the
+            # halt loop, so X holds whatever was there and the test fails
+            stub_s = tmpdir / "stub.s"
+            stub_s.write_text("\t.area\t.text\n\t.globl\t__exit\n\t.globl\t_abort\n"
+                              "__exit:\n_abort:\tjmp\t0xFFFC\n")
+            result = subprocess.run(
+                [str(self.asm), "-g", "-o", str(stub_s)],
+                capture_output=True, text=True, cwd=tmpdir)
+            if result.returncode != 0:
+                raise RuntimeError(f"Assemble failed:\n{result.stderr}")
+
+            # Link with libc and libgcc
             result = subprocess.run([
                 str(self.link), "-s", "-m", "-w",
                 "-o", str(s19_file), "-b", f".text={hex(text_addr)}",
-                str(rel_file), "-l", self.libc, "-l", self.libgcc
+                str(rel_file), str(tmpdir / "stub.rel"),
+                "-l", self.libc, "-l", self.libgcc
             ], capture_output=True, text=True, cwd=tmpdir)
             if result.returncode != 0:
                 raise RuntimeError(f"Link failed:\n{result.stderr}")
@@ -214,7 +239,7 @@ class GCC6809TestRunner:
         cpu.program_counter.set(start)
 
         # Execute with crash detection
-        max_ops = 100000
+        max_ops = MAX_OPS
         for ops in range(max_ops):
             if cpu.program_counter.value == halt_addr:
                 break
@@ -250,6 +275,7 @@ def main():
         sys.exit(1)
 
     print("GCC6809 Test Runner")
+    print(f"Optimization levels: {' '.join(OPT_LEVELS)}")
     print("=" * 50)
 
     try:
@@ -279,29 +305,30 @@ def main():
 
         print(f"\n[TEST] {test_file.stem}")
 
-        try:
-            result = runner.compile_and_run(test_file)
-            if result == expected:
-                if xfail_reason:
-                    print(f"  XPASS: {result} (expected to fail: {xfail_reason})")
-                    xpassed += 1
+        for opt in OPT_LEVELS:
+            try:
+                result = runner.compile_and_run(test_file, opt)
+                if result == expected:
+                    if xfail_reason:
+                        print(f"  {opt} XPASS: {result} (expected to fail: {xfail_reason})")
+                        xpassed += 1
+                    else:
+                        print(f"  {opt} PASS: {result}")
+                        passed += 1
                 else:
-                    print(f"  PASS: {result}")
-                    passed += 1
-            else:
+                    if xfail_reason:
+                        print(f"  {opt} XFAIL: expected {expected}, got {result} ({xfail_reason})")
+                        xfailed += 1
+                    else:
+                        print(f"  {opt} FAIL: expected {expected}, got {result}")
+                        failed += 1
+            except Exception as e:
                 if xfail_reason:
-                    print(f"  XFAIL: expected {expected}, got {result} ({xfail_reason})")
+                    print(f"  {opt} XFAIL: {e} ({xfail_reason})")
                     xfailed += 1
                 else:
-                    print(f"  FAIL: expected {expected}, got {result}")
+                    print(f"  {opt} ERROR: {e}")
                     failed += 1
-        except Exception as e:
-            if xfail_reason:
-                print(f"  XFAIL: {e} ({xfail_reason})")
-                xfailed += 1
-            else:
-                print(f"  ERROR: {e}")
-                failed += 1
 
     print("\n" + "=" * 50)
     parts = [f"{passed} passed", f"{failed} failed"]

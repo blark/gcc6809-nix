@@ -18,7 +18,7 @@
  # although the compile breaks without it.  -DDF=SF is required to set
 --- a/gcc/config/m6809/libgcc1.s	1969-12-31 19:00:01
 +++ b/gcc/config/m6809/libgcc1.s	2025-12-31 08:30:07
-@@ -280,8 +280,133 @@
+@@ -280,8 +280,135 @@
  	leax	16,x
  	rts
  #endif
@@ -33,10 +33,12 @@
 +;;;
 +;;; Stack layout at entry (X = sret pointer):
 +;;;   0,s-1,s = return address
-+;;;   2,s-3,s = v_lo (second arg, low word)
-+;;;   4,s-5,s = v_hi
-+;;;   6,s-7,s = u_lo (first arg, low word)
-+;;;   8,s-9,s = u_hi
++;;;   2,s-3,s = v_hi (second arg, high word)
++;;;   4,s-5,s = v_lo
++;;;   6,s-7,s = u_hi (first arg, high word)
++;;;   8,s-9,s = u_lo
++;;; (each 32-bit argument is stored big-endian, high word at the lower
++;;; address, like any long in memory)
 +;;;
 +;;; Algorithm: result = u_lo*v_lo + (u_lo*v_hi + u_hi*v_lo)<<16
 +;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -51,20 +53,20 @@
 +				; 8,9 tmp0  10,11 tmp1
 +
 +	; p0 = u_lo.low * v_lo.low
-+	lda	7,x		; u_lo.low
-+	ldb	3,x		; v_lo.low
++	lda	9,x		; u_lo.low
++	ldb	5,x		; v_lo.low
 +	mul
 +	std	0,s		; lo = p0
  
 +	; p1 = u_lo.low * v_lo.high
-+	lda	7,x
-+	ldb	2,x		; v_lo.high
++	lda	9,x
++	ldb	4,x		; v_lo.high
 +	mul
 +	std	4,s		; mid = p1
  
 +	; p2 = u_lo.high * v_lo.low
-+	lda	6,x		; u_lo.high
-+	ldb	3,x
++	lda	8,x		; u_lo.high
++	ldb	5,x
 +	mul
 +	addd	4,s
 +	std	4,s
@@ -73,8 +75,8 @@
 +	sta	6,s		; mid_carry (0/1)
 +
 +	; p3 = u_lo.high * v_lo.high
-+	lda	6,x
-+	ldb	2,x
++	lda	8,x
++	ldb	4,x
 +	mul
 +	std	2,s		; hi = p3
 +
@@ -96,16 +98,16 @@
 +	std	2,s
 +
 +	; cross1 = low16(u_lo * v_hi)
-+	lda	7,x		; u_lo.low
-+	ldb	5,x		; v_hi.low
++	lda	9,x		; u_lo.low
++	ldb	3,x		; v_hi.low
 +	mul
 +	std	8,s		; tmp0 = p0
-+	lda	7,x
-+	ldb	4,x		; v_hi.high
++	lda	9,x
++	ldb	2,x		; v_hi.high
 +	mul
 +	std	10,s		; tmp1 = p1
-+	lda	6,x		; u_lo.high
-+	ldb	5,x
++	lda	8,x		; u_lo.high
++	ldb	3,x
 +	mul
 +	addd	10,s
 +	std	10,s		; tmp1 = p1+p2
@@ -117,16 +119,16 @@
 +	std	2,s		; hi += cross1
 +
 +	; cross2 = low16(u_hi * v_lo)
-+	lda	9,x		; u_hi.low
-+	ldb	3,x		; v_lo.low
++	lda	7,x		; u_hi.low
++	ldb	5,x		; v_lo.low
 +	mul
 +	std	8,s
-+	lda	9,x
-+	ldb	2,x		; v_lo.high
++	lda	7,x
++	ldb	4,x		; v_lo.high
 +	mul
 +	std	10,s
-+	lda	8,x		; u_hi.high
-+	ldb	3,x
++	lda	6,x		; u_hi.high
++	ldb	5,x
 +	mul
 +	addd	10,s
 +	std	10,s
