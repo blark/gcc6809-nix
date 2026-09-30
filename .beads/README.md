@@ -1,81 +1,48 @@
-# Beads - AI-Native Issue Tracking
+# Shared Beads task database
 
-Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
+This repository uses the homelab's Kubernetes-hosted Dolt server:
 
-## What is Beads?
+- Database: `gcc6809`
+- SQL user: `beads`
+- Client endpoint: `127.0.0.1:3307` through Kubernetes port-forward
+- Password: machine-local `~/.config/beads/credentials`, never committed
 
-Beads is issue tracking that lives in your repo, making it perfect for AI coding agents and developers who want their issues close to their code. No web UI required - everything works through the CLI and integrates seamlessly with git.
+Run one tunnel per machine and keep it running:
 
-**Learn more:** [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
-
-## Quick Start
-
-### Essential Commands
-
-```bash
-# Create new issues
-bd create "Add user authentication"
-
-# View all issues
-bd list
-
-# View issue details
-bd show <issue-id>
-
-# Update issue status
-bd update <issue-id> --claim
-bd update <issue-id> --status done
-
-# Sync with Dolt remote
-bd dolt push
+```sh
+kubectl -n beads port-forward --address 127.0.0.1 svc/dolt 3307:3306
 ```
 
-### Working with Issues
+Authorized machines use this credentials file (mode 0600, parent 0700):
 
-Issues in Beads are:
-- **Git-native**: Stored in Dolt database with version control and branching
-- **AI-friendly**: CLI-first design works perfectly with AI coding agents
-- **Branch-aware**: Issues can follow your branch workflow
-- **Sync-ready**: Uses Dolt remotes for backup and team sharing
-
-## Why Beads?
-
-✨ **AI-Native Design**
-- Built specifically for AI-assisted development workflows
-- CLI-first interface works seamlessly with AI coding agents
-- No context switching to web UIs
-
-🚀 **Developer Focused**
-- Issues live in your repo, right next to your code
-- Works offline, syncs when you push
-- Fast, lightweight, and stays out of your way
-
-🔧 **Git Integration**
-- Dolt-native sync via bd dolt push / bd dolt pull
-- Branch-aware issue tracking
-- Dolt-native three-way merge resolution
-
-## Get Started with Beads
-
-Try Beads in your own projects:
-
-```bash
-# Install Beads
-curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
-
-# Initialize in your repo
-bd init
-
-# Create your first issue
-bd create "Try out Beads"
+```ini
+[127.0.0.1:3307]
+password = <shared-password>
 ```
 
-## Learn More
+Then verify from this repository:
 
-- **Documentation**: [github.com/steveyegge/beads/docs](https://github.com/steveyegge/beads/tree/main/docs)
-- **Quick Start Guide**: Run `bd quickstart`
-- **Examples**: [github.com/steveyegge/beads/examples](https://github.com/steveyegge/beads/tree/main/examples)
+```sh
+bd context
+bd dolt test
+bd ready
+```
 
----
+The context must show database `gcc6809`, server mode, and port `3307`.
+Tracked metadata/config points clones at the same database. Do not bootstrap
+an independent local database from Git or force reinitialization. If the
+connection fails, restore the tunnel first. It must be restarted after its
+pod is replaced or the connection drops.
 
-*Beads: Issue tracking that moves at the speed of thought* ⚡
+Use a distinct `BEADS_ACTOR` per agent and `bd update ID --claim` to coordinate
+work. Agents share one authoritative database, so normal work does not need
+Dolt push/pull. The auto-configured Git remote is not evidence that backups
+exist: off-cluster backups are not yet configured.
+
+The server is managed through Flux in `homelab-k8s/apps/beads`. Do not run
+`bd dolt start/stop` or change schemas concurrently with other agents.
+
+For a genuinely new project, the deployment repository provides
+`apps/beads/init-project.py`. It handles Beads 1.3's init-only environment
+password requirement and persists shared-server port 3307. This project is
+already initialized; use the connection checks above instead.
