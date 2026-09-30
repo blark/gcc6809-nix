@@ -271,6 +271,8 @@
               inherit pname version;
               sha256 = "sha256-Q5DNA+RmMmSR2I33WLIsVWyZJpknWBK820dL41Bgd74=";
             };
+            # SEX must set A=0xff for negative B; see tests/review/BIT_HELPERS.md.
+            patches = [ ./patches/mc6809-sex-negative.patch ];
             pyproject = true;
             build-system = [ pkgs.python3Packages.poetry-core ];
             dependencies = [ pkgs.python3Packages.click ];
