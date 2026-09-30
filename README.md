@@ -52,7 +52,9 @@ cases cover basic operations, 32-bit arithmetic and arguments, indirect calls,
 setjmp/longjmp and regression tests for fixed compiler and libc bugs.
 `GCC6809_OPT="-Os"` limits the optimization levels, `GCC6809_TOOLCHAIN=/path`
 picks another toolchain. `tests/review/run_longjmp_review.py --exhaustive`
-additionally runs libc's `_longjmp` for every 16-bit `val`.
+additionally runs libc's `_longjmp` for every 16-bit `val`, and
+`tests/review/run_divmod_review.py` runs libgcc's 16-bit divide/modulo
+helpers for every 16-bit dividend against representative divisors.
 
 ## Patches
 
