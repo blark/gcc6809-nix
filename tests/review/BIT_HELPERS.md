@@ -4,6 +4,11 @@ Scope: default 16-bit-int ABI, GCC 4.3.6 m6809 runtime from source revision
 `e401b3bc8b7a100218185683e7d36c100ef9d4b6`. Beads workstream B:
 `gcc6809-lo0` (shifts), `gcc6809-u3p` (zero bit counts).
 
+**Historical suite counts are for workstream B alone**, based on `043e30e`
+and implemented by `7bb5316` / `ae74065`. In particular, 275 and 290 are
+not combined-main totals. Arithmetic-workstream tests and the later
+signed-multiply compiler fix change the totals; rerun the suite after integration.
+
 ## Contracts and test boundaries
 
 - `gcc/config/m6809/libgcc1.s:43–103`: `_ashlhi3`, `_lshrhi3`,
@@ -61,8 +66,11 @@ without a separate contract decision. No C test calls a zero-input
   16-bit shift at counts 0/15/16; also both 32-bit count helpers over all
   low-word-only and high-word-only values. Not every 32-bit value, count,
   register state, or memory access is exhaustively checked.
-- `check_sex_opcode.py`: raw opcode `0x1d`, all 65,536 initial D values;
-  checks D, N/Z and PC. Independent of generated code and libgcc.
+- `check_sex_opcode.py`: raw opcode `0x1d`, all 65,536 initial D values
+  crossed with all 32 initial H/N/Z/V/C combinations: 2,097,152 checks.
+  Checks D and PC, correct N/Z replacement, and unchanged V/C/H. Both zero
+  and one are tested for every preserved flag. E/F/I and other CPU-register
+  states are not exhausted. Independent of generated code and libgcc.
 
 No changes to the shared test runner or compiler are needed.
 
@@ -82,7 +90,7 @@ Unmodified emulator, unchanged toolchain:
 | Original C suite, five optimization levels | 275 pass |
 | Original suite plus three new C files | 285 pass, 5 fail |
 | Direct helper default matrix | 18,434 pass, 288 fail |
-| Raw SEX opcode, all D inputs | 32,896 pass, 32,640 fail |
+| Original SEX check, all D inputs with initial CC=0 | 32,896 pass, 32,640 fail |
 
 The five C failures are all `bit_shift32_edges`; the helper failures are
 all arithmetic right shifts of negative values at valid counts 16–31.
@@ -97,7 +105,7 @@ With the patched emulator and the same compiler/archive:
 |---|---:|
 | Full C suite, `-O0 -O1 -O2 -O3 -Os` | **290 pass, 0 fail** |
 | Direct helper matrix plus exhaustive sweeps | **1,001,762 pass, 0 fail** |
-| Raw SEX opcode, all D inputs | **65,536 pass, 0 fail** |
+| Original SEX check, all D inputs with initial CC=0 | **65,536 pass, 0 fail** |
 | Existing exhaustive longjmp review | **65,536 pass, 0 fail** |
 
 The full C result was also verified through `nix run .#test`, exercising
@@ -107,6 +115,23 @@ Independent review reran the Nix all-system evaluation check, emulator
 build, raw SEX test, and all 15 new C/optimization combinations. No
 introduced defects found. Existing flake formatting debt was left alone;
 `flake.lock` is unchanged.
+
+## Flag-preservation follow-up
+
+The original check above initialized CC to zero and checked only N/Z.
+The current check also exercises and verifies preserved V/C/H, and varies
+initial N/Z to catch stale result flags. SEX leaves V unchanged; it must
+not be cleared based on the upstream emulator's misleading flag docstring.
+
+| Current raw-opcode check | Result |
+|---|---:|
+| Unpatched MC6809 0.6.0 | 1,052,672 pass; 1,044,480 fail |
+| Patched MC6809 0.6.0 | **2,097,152 pass; 0 fail** |
+
+Six temporary negative controls forced C, V or H to zero or one after each
+instruction. Every mutant was rejected, with 1,048,576 failures each. No
+mutation was retained in the emulator or tests. The branch's C suite still
+passes all 290 case/optimization combinations.
 
 ## Reproduce
 
