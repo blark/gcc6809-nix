@@ -24,8 +24,10 @@ Three compiled C cases under `tests/cases`, each run at
   trailing junk and end-pointer offsets, and two no-conversion inputs.
   Newlib 1.15's implementation treats `"0x"` without a digit as no
   conversion, with `endptr` set to `nptr`; this particular case is a
-  **pinned implementation characterization**, not an assertion about
-  every C library. No overflow, invalid base, locale or errno behavior
+  **pinned non-conformance**: C99 7.20.1.4p4 would consume the leading
+  `0` and set `endptr` to `nptr+1`. This deliberately records newlib's
+  current behavior, not a portable libc requirement. The C case labels
+  it accordingly; a future newlib fix must update that characterization. No overflow, invalid base, locale or errno behavior
   is claimed.
 
 `-Os` generated assembly contains explicit calls to `_memcpy`,

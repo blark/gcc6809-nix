@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Link the actual patched libgloss crt0.c and execute its reset vector."""
-import os
+"""Compile a C program with the default GCC driver and execute installed crt0.o."""
+import array
 import re
 import subprocess
 import sys
@@ -8,105 +8,144 @@ import tempfile
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'tests'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import run_tests as harness
 
-
-def run(command, cwd):
-    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=600)
-    if result.returncode:
-        raise RuntimeError(f'{command[0]}: {result.stdout}{result.stderr}')
-
-
-def source_from_patch():
-    lines = (ROOT / 'patches/newlib-m6809.patch').read_text().splitlines()
-    marker = '+++ b/libgloss/m6809/crt0.c'
-    start = lines.index(marker)
-    hunk = lines.index('@@ -0,0 +1,218 @@', start) + 1
-    body = []
-    for line in lines[hunk:]:
-        if line.startswith('diff --git '):
-            break
-        if not line.startswith('+'):
-            raise RuntimeError('unexpected crt0 patch hunk')
-        body.append(line[1:])
-    if len(body) != 218:
-        raise RuntimeError(f'crt0 source length changed: {len(body)}')
-    return '\n'.join(body) + '\n'
-
-
-def symbols(link_map):
-    return {name: int(addr, 16) for addr, name in
-            re.findall(r'^\s*([0-9A-Fa-f]+)\s+(_[A-Za-z0-9_]+)\b', link_map, re.M)}
-
-
-def main():
-    runner = harness.GCC6809TestRunner()
-    with tempfile.TemporaryDirectory(prefix='gcc6809-crt0-') as directory:
-        tmp = Path(directory)
-        (tmp / 'crt0.c').write_text(source_from_patch())
-        (tmp / 'probe.c').write_text('''
-volatile unsigned int initialized = 0x1234;
-volatile unsigned int uninitialized;
-volatile unsigned int report_sp, report_data, report_bss, report_cc;
-int main(void) {
-    __asm__ volatile ("tfr s,d\\n\\tstd _report_sp");
-    __asm__ volatile ("tfr cc,a\\n\\tsta _report_cc");
-    report_data = initialized;
-    report_bss = uninitialized;
+PROBE = r'''
+#include <stdlib.h>
+int supplied_argc __asm__ ("__argc") = 2;
+char *supplied_argv[] __asm__ ("__argv") = {"one", "two", 0};
+volatile unsigned int data_value = 0x1234;
+volatile unsigned char zeroed[8];
+volatile unsigned int ctor_seen, main_seen, atexit_seen, dtor_seen;
+volatile unsigned int observed_argc, observed_argv, observed_sp;
+static void goodbye(void) { atexit_seen = 0x55; }
+static void construct(void) __attribute__((constructor));
+static void destruct(void) __attribute__((destructor));
+static void construct(void) { ctor_seen = 0x11; }
+static void destruct(void) { dtor_seen = 0x33; }
+int main(int argc, char **argv) {
+    unsigned int i;
+    __asm__ volatile("tfr s,d\n\tstd _observed_sp");
+    observed_argc = argc;
+    observed_argv = (unsigned int)argv;
+    main_seen = ctor_seen;
+    for (i = 0; i < 8; ++i) if (zeroed[i] != 0) return 80 + i;
+    if (data_value != 0x1234) return 90;
+    if (atexit(goodbye)) return 91;
+    if (argc != 2 || !argv || !argv[0] || !argv[1] || argv[2]
+        || argv[0][0] != 'o' || argv[1][0] != 't') return 92;
     return 37;
 }
-''')
-        for name in ('crt0', 'probe'):
-            source = tmp / f'{name}.c'
-            run([str(runner.gcc), '-O0', '-S', str(source), '-o', str(tmp / f'{name}.s')], tmp)
-            run([str(runner.asm), '-g', '-o', str(tmp / f'{name}.s')], tmp)
-        run([str(runner.link), '-s', '-m', '-w', '-o', str(tmp / 'image.s19'),
-             '-b', '.text=0x2000', '-b', '.data=0x1000', '-b', '.bss=0x1100', '-b', 'vector=0xfff0',
-             str(tmp / 'crt0.rel'), str(tmp / 'probe.rel'), '-l', runner.libgcc], tmp)
-        image = harness.parse_s19((tmp / 'image.s19').read_text())
-        addresses = symbols((tmp / 'image.map').read_text())
+'''
+HALT = 0xfffc
+
+
+def build(runner):
+    crt0 = runner.toolchain / 'lib/gcc/m6809-unknown-none/4.3.6/crt0.o'
+    if not crt0.is_file():
+        raise RuntimeError(f'installed GCC crt0.o missing: {crt0}')
+    with tempfile.TemporaryDirectory(prefix='gcc6809-crt0-installed-') as directory:
+        tmp = Path(directory)
+        src, image, link_map = (tmp / 'probe.c', tmp / 'probe.s19', tmp / 'probe.map')
+        src.write_text(PROBE)
+        # -L works around the separately filed, pre-existing symlinkJoin
+        # driver search-path bug. Do not pass crt0.o or a custom entry point.
+        command = [str(runner.gcc), '-O0', '-std=c99',
+                   f'-I{runner.toolchain}/m6809-unknown-none/include',
+                   f'-L{runner.toolchain}/m6809-unknown-none/lib',
+                   str(src), '-Wl,--args', '-Wl,--map', '-o', str(image)]
+        result = subprocess.run(command, cwd=tmp, capture_output=True, text=True, timeout=600)
+        if result.returncode:
+            raise RuntimeError(f'default GCC link failed: {result.stdout}{result.stderr}')
+        record = image.read_text()
+        match = re.search(r'^S903([0-9A-Fa-f]{4})', record, re.M)
+        if not match:
+            raise RuntimeError('linked image has no S9 entry point')
+        symbols = {name: int(addr, 16) for addr, name in
+                   re.findall(r'^\s*([0-9A-Fa-f]+)\s+(_[A-Za-z0-9_]+)\b',
+                              link_map.read_text(), re.M)}
+        for name in ('__start', '__exit', '__argc', '__argv', '_main', '_data_value', '_zeroed',
+                     '_ctor_seen', '_main_seen', '_atexit_seen', '_dtor_seen',
+                     '_observed_sp', '_observed_argc', '_observed_argv'):
+            if name not in symbols:
+                raise RuntimeError(f'missing linked symbol {name}')
+        return harness.parse_s19(record), int(match.group(1), 16), symbols
+
+
+def exercise(start_sp):
+    runner = harness.GCC6809TestRunner()
+    code, entry, symbols = build(runner)
+    if entry != symbols['__start']:
+        raise RuntimeError(f'S9 entry {entry:04x} != installed crt0 __start {symbols["__start"]:04x}')
     cfg = harness.Config(harness.CFG_DICT)
     memory = harness.Memory64K(cfg)
     cpu = harness.CPU(memory, cfg)
+    memory._mem[:] = array.array('B', [0xa5] * 65536)
     mem = memory._mem
-    for address, byte in image.items():
+    for address, byte in code.items():
         mem[address] = byte
+
     def word(address):
         return (mem[address] << 8) | mem[address + 1]
-    def put(address, value):
-        mem[address], mem[address + 1] = value >> 8, value & 255
-    # A real image loader initialized .data; crt0 does not copy it.
-    # Seed .bss nonzero to distinguish missing zeroing from an already-zero emulator RAM.
-    bss = addresses['_uninitialized']
-    put(bss, 0xa5a5)
-    initial_data = word(addresses['_initialized'])
-    if initial_data != 0x1234:
-        raise RuntimeError(f'linker failed to initialize .data: {initial_data:04x}')
-    put(0xe001, 0)
-    cpu.system_stack_pointer.set(0xb000)
-    cpu.set_cc(0x50)  # IRQ/FIRQ disabled on reset; crt0 should enable them.
-    cpu.program_counter.set(word(0xfffe))
-    if cpu.program_counter.value not in image:
-        raise RuntimeError(f'reset vector points outside linked code: {cpu.program_counter.value:04x}')
-    for _ in range(5000):
-        cpu.get_and_call_next_op()
-        if word(addresses['_report_sp']) and mem[0xe001] == 37:
+
+    def observed(name):
+        return word(symbols[name])
+
+    if observed('_data_value') != 0x1234:
+        raise RuntimeError('linker/loader did not populate initialized data')
+    if any(mem[symbols['_zeroed'] + i] != 0xa5 for i in range(8)):
+        raise RuntimeError('BSS unexpectedly initialized before crt0 ran')
+
+    # --args allows the probe to supply nonzero __argc and __argv symbols;
+    # unlike the default linker placeholders, incorrect null forwarding fails.
+    expected_argc = word(symbols['__argc'])
+    if expected_argc != 2 or symbols['__argv'] == 0:
+        raise RuntimeError('linker did not use supplied argc/argv symbols')
+    mem[HALT], mem[HALT + 1] = 0x20, 0xfe
+    mem[start_sp], mem[start_sp + 1] = HALT >> 8, HALT & 255
+    cpu.system_stack_pointer.set(start_sp)
+    cpu.program_counter.set(entry)
+    cpu.set_cc(0x50)
+    for _ in range(100000):
+        if cpu.program_counter.value == HALT:
             break
+        try:
+            cpu.get_and_call_next_op()
+        except (Exception, SystemExit) as error:
+            raise RuntimeError(f'CPU error at ${cpu.program_counter.value:04x}: {error}') from error
     else:
-        raise RuntimeError('main did not return through simulator exit')
-    sp = word(addresses['_report_sp'])
-    data = word(addresses['_report_data'])
-    bss_result = word(addresses['_report_bss'])
-    cc = mem[addresses['_report_cc']]
-    if not (0x1f00 <= sp <= 0x1ffe and data == initial_data
-            and bss_result == 0xa5a5 and cc & 0x50 == 0):
-        raise RuntimeError(f'SP={sp:04x} data={data:04x} BSS={bss_result:04x} CC={cc:02x}')
-    # This is a memory-mapped simulator exit, not a host process exit.
-    # The previous loop stopped on the actual write of the returned value.
-    print(f'crt0 PASS: reset vector, stack=0x{sp:04x}, initialized data, '
-          'BSS intentionally unchanged, simulator exit=37')
+        raise RuntimeError(f'crt0 failed to return to loader; PC={cpu.program_counter.value:04x}')
+
+    if cpu.index_x.value != 37 or cpu.accu_d.value != 37:
+        raise RuntimeError(f'wrong exit value: X={cpu.index_x.value} D={cpu.accu_d.value}; expected 37')
+    checks = {
+        'restored loader stack': (cpu.system_stack_pointer.value, start_sp + 2),
+        'initialized data': (observed('_data_value'), 0x1234),
+        'constructor': (observed('_ctor_seen'), 0x11),
+        'constructor visible in main': (observed('_main_seen'), 0x11),
+        'atexit callback': (observed('_atexit_seen'), 0x55),
+        'destructor': (observed('_dtor_seen'), 0x33),
+        'argc forwarded': (observed('_observed_argc'), expected_argc),
+        'argv pointer forwarded': (observed('_observed_argv'), symbols['__argv']),
+    }
+    for label, (actual, expected) in checks.items():
+        if actual != expected:
+            raise RuntimeError(f'{label}: got 0x{actual:04x}, expected 0x{expected:04x}')
+    sp = observed('_observed_sp')
+    if not start_sp - 16 <= sp <= start_sp - 2:
+        raise RuntimeError(f'main stack pointer 0x{sp:04x} outside entry frame')
+    for i in range(8):
+        if mem[symbols['_zeroed'] + i] != 0:
+            raise RuntimeError(f'BSS byte {i} not cleared by installed crt0.o')
+    print(f'installed crt0 PASS: S9 __start=0x{entry:04x}, '
+          f'loader S=0x{start_sp:04x}, main S=0x{sp:04x}, BSS cleared, '
+          'data intact, constructors/atexit/destructors, argc/argv=2, exit=37')
+
+
+def main():
+    for start_sp in (0xeffe, 0xdffe):
+        exercise(start_sp)
     return 0
 
 

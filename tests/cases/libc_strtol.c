@@ -1,6 +1,7 @@
 // EXPECT: 0
 // strtol: valid bases, whitespace/sign, end pointer and no-conversion cases.
 // Inputs stay within 32-bit long range; no errno or overflow assumptions.
+// The 0x-without-digits case pins a known non-conforming newlib 1.15 result.
 #include <stdlib.h>
 
 static char input[40];
@@ -45,7 +46,7 @@ int main(void)
     copy("0x");
     base = 16;
     got = strtol(input, &end, base);
-    if (got != 0 || end != input) return 8; // newlib 1.15: prefix without digits
+    if (got != 0 || end != input) return 8; // non-conforming, pinned newlib 1.15
     copy("10");
     base = 2;
     got = strtol(input, &end, base);
