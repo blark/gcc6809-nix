@@ -35,9 +35,11 @@ compiled at -O2), then confirmed by the checks below.
   second, so on entry the second operand is at `2,s` (high word) / `4,s`
   and the first at `6,s` / `8,s`. The order does not affect the product.
 - X holds a pointer to a 4-byte result area; the product is stored there
-  big-endian (`0,x` high word, `2,x` low word). Nothing outside those
-  4 bytes is written.
-- The caller pops the 8 argument bytes; S is restored to its entry value.
+  big-endian (`0,x` high word, `2,x` low word). Apart from its own
+  14-byte stack frame, it writes only those 4 bytes (the review script
+  checks 8 guard bytes on each side of them).
+- After `rts`, S is the entry S + 2 (the return address is popped); the
+  caller then removes the 8 argument bytes.
 - On return X still holds the result pointer (`puls x,pc` restores it).
   GCC does not rely on this: it reloads the product from the result area.
 - D and CC are clobbered; Y, U and DP are untouched. Uses 14 bytes of
@@ -51,7 +53,8 @@ compiled at -O2), then confirmed by the checks below.
 
 - Left operand in X, right operand at `2,s` (the caller pops it), product
   in X as `(a * b) mod 2^16`. Three 8 x 8 `MUL`s.
-- S restored; D clobbered; Y, U and DP untouched.
+- After `rts`, S is the entry S + 2; the caller removes the right operand.
+  D clobbered; Y, U and DP untouched.
 
 ## Evidence
 
@@ -92,7 +95,11 @@ them as GCC does, checking the product, S, the Y/U/DP canaries and, for
 - `___mulsi3` byte positions: every byte value at each of the four byte
   positions of `u` times every byte value at each position of `v`
   (16 x 65,536 = 1,048,576 calls), which drives every 8 x 8 partial
-  product and carry path in the helper with all 65,536 byte pairs;
+  product with all 65,536 byte pairs. With one non-zero byte per
+  operand, the carries between partial products are not all exercised:
+  those come from the edge grid and the random pairs (for example,
+  0xFFFF x 0xFFFF fails if the middle `adca #0` is replaced by `lda #0`,
+  while the byte-position grid still passes);
 - `___mulsi3` random: 200,000 pairs from `random.Random(6809)`, every
   second pair with random bytes cleared so zero bytes appear at every
   position;
@@ -150,7 +157,8 @@ built from `1d1a0de`:
 | `run_mulsi3_review.py` `_mulhi3` sweep + random | 1,148,576 pass |
 
 The full script (2,399,177 calls) takes about 40 s on 8
-processes; `--quick` runs about 400,000 calls, `--random N` and `--seed S`
+processes; `--quick` (edge grid, byte positions (0,0) and (3,3) only, 5,000 random
+pairs) runs about 400,000 calls, `--random N` and `--seed S`
 change the random batch.
 
 Limitations: emulator execution, not hardware; the default ABI only (the

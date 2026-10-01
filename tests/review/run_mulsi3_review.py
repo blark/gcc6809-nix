@@ -222,7 +222,7 @@ def main():
                         help="random ___mulsi3 pairs (default 200000)")
     parser.add_argument("--seed", type=int, default=6809)
     parser.add_argument("--quick", action="store_true",
-                        help="edge grid, one byte position, fewer random pairs")
+                        help="edge grid, byte positions (0,0) and (3,3), fewer random pairs")
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # progress through a pipe
 
