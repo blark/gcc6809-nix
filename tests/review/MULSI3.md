@@ -14,6 +14,11 @@ One adjacent compiler bug was found and is recorded as an XFAIL case
 (`mulqihi3_signed.c`, see "Bugs found"): it is in the `mulqihi3` insn
 pattern of `m6809.md`, not in a helper.
 
+Since fixed: the compiler fix (890569a) removed that pattern and the
+XFAIL, and the flake's emulator now sign-extends correctly in `SEX`
+(ae74065). See [SIGNED_MUL.md](SIGNED_MUL.md). The rest of this file
+records the review as it was at `1d1a0de`.
+
 The helpers under test are `___mulsi3` (32 x 32 -> low 32 bits, added by
 `patches/mulsi3-fix.patch` to replace the libgcc2 `__muldi3` that never
 stored its result) and `_mulhi3` (16 x 16 -> low 16 bits). GCC emits
@@ -129,7 +134,7 @@ is correct code; that path fails only on the emulator (below).
 `umulqihi3` (zero-extended operands) is correct. A fix would drop the
 signed pattern or correct the product for negative operands; it needs a
 GCC rebuild and is out of scope here. `tests/cases/mulqihi3_signed.c` is
-marked XFAIL until then.
+marked XFAIL until then. (Fixed in 890569a; see [SIGNED_MUL.md](SIGNED_MUL.md).)
 
 ## Emulator
 
