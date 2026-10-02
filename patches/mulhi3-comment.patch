@@ -1,0 +1,11 @@
+Correct a stale machine-description comment: this expander always emits a
+libcall; other independently matched patterns handle optimized multiplies.
+
+--- a/gcc/config/m6809/m6809.md
++++ b/gcc/config/m6809/m6809.md
+@@ -976,4 +976,2 @@
+-; Expand a 16x16 multiplication into either a libcall or a shift.
+-; If the second operand is a small constant, use the above form.
+-; Otherwise, do a libcall.
++; Expand remaining 16x16 multiplications as libcalls.
+ (define_expand "mulhi3"
