@@ -39,6 +39,9 @@ as6809 -o hello.s
 aslink -s -m -w -o hello.s19 -b .text=0x2000 hello.rel -l $M6809_LIBC
 ```
 
+`$M6809_LIBC` is provided by the flake's dev shell and points at the installed
+newlib `libc.a`, so the `aslink` line above works as-is inside `nix develop`.
+
 This manual `aslink` flow omits the installed GCC `crt0.o`: it enters your
 program without startup initialization. In particular, BSS contains whatever
 was already in RAM; use the normal GCC driver link when your program relies
@@ -76,6 +79,9 @@ additionally runs libc's `_longjmp` for every 16-bit `val`,
 helpers for every 16-bit dividend against representative divisors, and
 `tests/review/run_mulsi3_review.py` runs the 32-bit and 16-bit multiply
 helpers over edge, per-byte-position and random operand pairs.
+`tests/review/run_crt0_review.py` checks the installed `crt0.o` startup
+contract (BSS cleared, destructors after `main`), and
+`tests/review/check_umulqihi3_rtl.py` checks the unsigned byte-product RTL.
 
 ## Emulator dependency
 
@@ -116,6 +122,10 @@ This build includes fixes for several m6809 backend and libc bugs. See [patches/
 - **indirect-call-stack-offset.patch** - Indirect calls with pushed arguments used a stale stack offset
 - **newlib-m6809.patch** - The m6809 port of newlib 1.15.0
 - **newlib-longjmp-zero.patch** - `longjmp(env, 0)` now returns 1 from `setjmp` (C99 7.13.2.1)
+- **signed-mulqi-fix.patch** - Signed `char * char` no longer uses the 6809's unsigned `MUL` (`(-1) * (-1)` returned `0xfe01`)
+- **mulqi3-narrow.patch** - Adds a byte-truncating `mulqi3`, fixing the `try_rotate` reload ICE; the native `MUL` pattern gains a same-operand alternative
+- **umulqihi3-operands.patch** - Unsigned byte-product RTL zero-extends both operands; compiler-folded products were wrong for factors above 127
+- **mulhi3-comment.patch** - Corrects a stale `mulhi3` expander comment (this expander always emits a libcall)
 
 ## Platform Support
 
