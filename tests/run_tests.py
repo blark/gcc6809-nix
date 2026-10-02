@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "MC6809>=0.8.0",
-# ]
-# ///
 """
 GCC6809 Test Runner
 
@@ -12,7 +6,10 @@ Discovers and runs .c test files against the MC6809 emulator.
 
 Usage:
     nix run .#test [pattern]
-    nix develop --command uv run tests/run_tests.py [pattern]
+    nix develop --command python3 -B tests/run_tests.py [pattern]
+
+Nix supplies the corrected vendored MC6809 CPU. Standalone uv/PyPI execution
+is unsupported; see README.md for the Nix-only dependency path.
 
 Every test is compiled at each optimization level in GCC6809_OPT
 (default "-O0 -Os -O2"), run, and its result compared with the EXPECT

@@ -3,19 +3,35 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    anachron8-emu = {
+      url = "git+https://git.sherwood.haus/blark/anachron8-emu.git?ref=extract/package";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      anachron8-emu,
+    }:
     let
       # Currently only supports aarch64-darwin due to ARM64-specific patches
       supportedSystems = [ "aarch64-darwin" ];
 
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
-      nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
+      nixpkgsFor = forAllSystems (
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ anachron8-emu.overlays.default ];
+        }
+      );
     in
     {
-      packages = forAllSystems (system:
+      packages = forAllSystems (
+        system:
         let
           pkgs = nixpkgsFor.${system};
 
@@ -167,7 +183,7 @@
               homepage = "https://gitlab.com/dfffffff/gcc6809";
               license = pkgs.lib.licenses.gpl3Plus;
               platforms = [ "aarch64-darwin" ];
-              maintainers = [];
+              maintainers = [ ];
             };
           };
 
@@ -187,7 +203,12 @@
             ];
 
             # gcc12 needed for host tools used during build
-            nativeBuildInputs = [ gcc6809 pkgs.gnumake pkgs.gcc12 pkgs.texinfo ];
+            nativeBuildInputs = [
+              gcc6809
+              pkgs.gnumake
+              pkgs.gcc12
+              pkgs.texinfo
+            ];
 
             # WORKAROUND: See gcc6809 preConfigure
             preConfigure = ''
@@ -248,7 +269,10 @@
 
           toolchain = pkgs.symlinkJoin {
             name = "gcc6809-toolchain";
-            paths = [ gcc6809 newlib-m6809 ];
+            paths = [
+              gcc6809
+              newlib-m6809
+            ];
             meta = gcc6809.meta // {
               description = "Complete GCC 6809 toolchain with C library";
             };
@@ -264,47 +288,36 @@
               sha256 = "1h6hwsn8876j3lfww9fg4j3wv20w0dnaf3599pa5vxwv3vzjadhp";
             };
             patches = gcc6809.patches;
-            phases = [ "unpackPhase" "patchPhase" "installPhase" ];
+            phases = [
+              "unpackPhase"
+              "patchPhase"
+              "installPhase"
+            ];
             installPhase = "cp -r . $out";
           };
-          # MC6809 emulator (Python) used by tests/run_tests.py
-          mc6809 = pkgs.python3Packages.buildPythonPackage rec {
-            pname = "MC6809";
-            version = "0.6.0";
-            src = pkgs.fetchPypi {
-              inherit pname version;
-              sha256 = "sha256-Q5DNA+RmMmSR2I33WLIsVWyZJpknWBK820dL41Bgd74=";
-            };
-            # SEX must set A=0xff for negative B; see tests/review/BIT_HELPERS.md.
-            patches = [ ./patches/mc6809-sex-negative.patch ];
-            pyproject = true;
-            build-system = [ pkgs.python3Packages.poetry-core ];
-            dependencies = [ pkgs.python3Packages.click ];
-            postPatch = ''
-              substituteInPlace pyproject.toml \
-                --replace-fail 'poetry.masonry.api' 'poetry.core.masonry.api' \
-                --replace-fail 'poetry>=0.12' 'poetry-core>=1.0.0'
-            '';
-            doCheck = false;
-            dontCheckRuntimeDeps = true;
-            meta = {
-              description = "MC6809 CPU emulator written in Python";
-              license = pkgs.lib.licenses.gpl3;
-              platforms = pkgs.lib.platforms.unix;
-            };
-          };
+          # CPU-only vendored fork; keep the public package alias for review scripts.
+          mc6809 = pkgs.python3Packages.mc6809;
 
           # nix run .#test [pattern]: compile every tests/cases/*.c at -O0, -Os
           # and -O2 with this toolchain, run it on the emulator, check EXPECT.
           test-runner = pkgs.writeShellScriptBin "gcc6809-test" ''
             export GCC6809_TOOLCHAIN="''${GCC6809_TOOLCHAIN:-${toolchain}}"
-            exec ${pkgs.python3.withPackages (_: [ mc6809 ])}/bin/python3 \
+            exec ${pkgs.python3.withPackages (ps: [ ps.mc6809 ])}/bin/python3 \
               ${./tests}/run_tests.py "$@"
           '';
-        in {
-          inherit gcc6809 newlib-m6809 toolchain gcc6809-src mc6809 test-runner;
+        in
+        {
+          inherit
+            gcc6809
+            newlib-m6809
+            toolchain
+            gcc6809-src
+            mc6809
+            test-runner
+            ;
           default = toolchain;
-        });
+        }
+      );
 
       apps = forAllSystems (system: {
         test = {
@@ -314,12 +327,17 @@
         };
       });
 
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
           pkgs = nixpkgsFor.${system};
-        in {
+        in
+        {
           default = pkgs.mkShell {
-            packages = [ self.packages.${system}.toolchain ];
+            packages = [
+              self.packages.${system}.toolchain
+              (pkgs.python3.withPackages (ps: [ ps.mc6809 ]))
+            ];
             M6809_SYSROOT = "${self.packages.${system}.toolchain}/m6809-unknown-none";
             M6809_CFLAGS = "-I${self.packages.${system}.toolchain}/m6809-unknown-none/include";
             M6809_LIBC = "${self.packages.${system}.toolchain}/m6809-unknown-none/lib/libc.a";
@@ -331,6 +349,7 @@
               echo "  Patched source: \$GCC6809_SRC"
             '';
           };
-        });
+        }
+      );
     };
 }

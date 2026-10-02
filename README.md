@@ -51,7 +51,7 @@ in [tests/review/STARTUP.md](tests/review/STARTUP.md).
 
 ```bash
 nix run .#test            # all cases, or: nix run .#test -- long_
-nix develop -c uv run tests/run_tests.py
+nix develop -c python3 -B tests/run_tests.py
 ```
 
 Every `tests/cases/*.c` is compiled at -O0, -Os and -O2, run on the MC6809
@@ -65,6 +65,35 @@ additionally runs libc's `_longjmp` for every 16-bit `val`,
 helpers for every 16-bit dividend against representative divisors, and
 `tests/review/run_mulsi3_review.py` runs the 32-bit and 16-bit multiply
 helpers over edge, per-byte-position and random operand pairs.
+
+## Emulator dependency
+
+Tests use the CPU-only `mc6809` package from
+[anachron8-emu](https://git.sherwood.haus/blark/anachron8-emu), pinned in
+`flake.lock`. Its overlay extends `pythonPackagesExtensions`, so
+`pkgs.python3Packages.mc6809` supplies the vendored, corrected CPU to both
+`nix run .#test` and `nix develop`. The `MC6809` import/API is unchanged;
+the machine model is not installed. The SEX fix now lives in that fork,
+not in a local PyPI recipe or patch.
+
+Python scripts are **Nix-only**: use `nix develop -c python3 -B ...` for
+`tests/run_tests.py`, `tests/debug_mulsi3.py`, and every tracked
+`tests/review/*.py` script. Their upstream PEP 723 metadata has been removed.
+Standalone `uv run`/PyPI dependency resolution is unsupported because it can
+install an uncorrected CPU and invalidate results.
+
+Run the full suite and exhaustive reviews with the same pinned environment:
+
+```bash
+export GCC6809_OPT="-O0 -O1 -O2 -O3 -Os"
+nix run .#test
+nix develop -c python3 -B tests/review/check_sex_opcode.py
+nix develop -c python3 -B tests/review/run_bit_helpers.py --exhaustive
+nix develop -c python3 -B tests/review/run_divmod_review.py --jobs 8
+nix develop -c python3 -B tests/review/run_longjmp_review.py --include-suite --exhaustive
+nix develop -c python3 -B tests/review/run_mulsi3_review.py --jobs 8
+nix develop -c python3 -B tests/review/run_signed_mul_review.py --exhaustive
+```
 
 ## Patches
 

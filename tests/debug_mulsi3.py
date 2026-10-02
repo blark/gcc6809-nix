@@ -1,11 +1,10 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["MC6809>=0.8.0"]
-# ///
 """
 Step-by-step trace showing exactly what __mulsi3 does wrong.
 
-Usage: nix develop -c uv run tests/debug_mulsi3.py
+Usage: nix develop -c python3 -B tests/debug_mulsi3.py
+
+Nix supplies the corrected vendored MC6809 CPU; standalone uv/PyPI execution
+is unsupported.
 """
 import array
 import subprocess
