@@ -13,13 +13,13 @@
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
+
+      target = "m6809-unknown-none";
     in
     {
       packages = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
-
-          target = "m6809-unknown-none";
 
           # Flags to compile GCC 4.3.6 with modern clang/gcc - suppress warnings
           # that are now errors, and use legacy GNU89 inline semantics
@@ -321,11 +321,12 @@
       checks = forAllSystems (system:
         let
           pkgs = nixpkgsFor.${system};
-          toolchain = self.packages.${system}.toolchain;
+          inherit (self.packages.${system}) toolchain;
         in {
+          # strlen on a volatile buffer can't be folded, so libc.a is linked
           driver = pkgs.runCommand "gcc6809-driver-check" { } ''
-            printf '#include <stdio.h>\n#include <string.h>\nint main(void){ return (int)strlen("6809"); }\n' > hello.c
-            ${toolchain}/bin/m6809-unknown-none-gcc -Os hello.c -o hello.s19
+            printf '#include <stdio.h>\n#include <string.h>\nvolatile char s[] = "6809";\nint main(void){ return (int)strlen((const char *)s); }\n' > hello.c
+            ${toolchain}/bin/${target}-gcc -Os hello.c -o hello.s19
             grep -q '^S9' hello.s19
             touch $out
           '';
@@ -351,7 +352,7 @@
             GCC6809_SRC = "${self.packages.${system}.gcc6809-src}";
             shellHook = ''
               echo "GCC 6809 toolchain available"
-              echo "  Compiler: m6809-unknown-none-gcc \$M6809_CFLAGS"
+              echo "  Compiler: m6809-unknown-none-gcc (finds newlib's headers and libc.a itself)"
               echo "  Linker: aslink ... -l \$M6809_LIBC"
               echo "  Patched source: \$GCC6809_SRC"
             '';
