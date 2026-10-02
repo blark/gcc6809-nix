@@ -9,8 +9,8 @@ it is not the toolchain's startup path. The original source-only probe was
 rejected in review and replaced.
 
 `run_crt0_review.py` invokes the normal cross-compiler driver on a C probe,
-with `-L$toolchain/m6809-unknown-none/lib` to work around the separately
-filed pre-existing `libc.a` search-path bug. `-Wl,--args` lets the probe
+with no include or library paths (the driver finds newlib's headers and
+`libc.a` itself). `-Wl,--args` lets the probe
 supply nonzero `__argc` and `__argv` symbols. It does not manually supply a
 startup object or change the entry point. The driver generates the S19
 image; its map identifies `__start`, `_main`, `__exit` and the probe

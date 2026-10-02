@@ -249,6 +249,16 @@
           toolchain = pkgs.symlinkJoin {
             name = "gcc6809-toolchain";
             paths = [ gcc6809 newlib-m6809 ];
+            # The driver finds crt0.o, cc1, libc.a and newlib's headers from
+            # its own location, resolving symlinks: as a symlink into the
+            # gcc6809 output it never sees newlib. A real copy here makes it
+            # search this joined tree (gcc6809-063).
+            postBuild = ''
+              for driver in cpp gcc gcc-4.3.6; do
+                exe=$out/bin/${target}-$driver
+                cp --remove-destination "$(readlink -f "$exe")" "$exe"
+              done
+            '';
             meta = gcc6809.meta // {
               description = "Complete GCC 6809 toolchain with C library";
             };
@@ -304,6 +314,21 @@
         in {
           inherit gcc6809 newlib-m6809 toolchain gcc6809-src mc6809 test-runner;
           default = toolchain;
+        });
+
+      # nix flake check: the plain driver compiles against newlib's headers and
+      # links crt0.o and libc.a with no paths given (gcc6809-063)
+      checks = forAllSystems (system:
+        let
+          pkgs = nixpkgsFor.${system};
+          toolchain = self.packages.${system}.toolchain;
+        in {
+          driver = pkgs.runCommand "gcc6809-driver-check" { } ''
+            printf '#include <stdio.h>\n#include <string.h>\nint main(void){ return (int)strlen("6809"); }\n' > hello.c
+            ${toolchain}/bin/m6809-unknown-none-gcc -Os hello.c -o hello.s19
+            grep -q '^S9' hello.s19
+            touch $out
+          '';
         });
 
       apps = forAllSystems (system: {
