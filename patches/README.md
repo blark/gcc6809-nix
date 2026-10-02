@@ -260,9 +260,10 @@ Corrects the unsigned native byte-product RTL: both variable operands are
 zero-extended to HI, and immediate factors are unsigned HI values in 0..255.
 Previously the second operand was a bare QI value, including negative
 sign-normalized constants such as -56 for unsigned 200. The low byte agreed
-with MUL, but the full RTL product did not. This is a latent RTL defect;
-no baseline C wrong-code reproduction is claimed.
+with MUL, but the full RTL product did not, and a product the compiler
+folded from a known value came out wrong (`umulqihi3_fold.c`: 253 * 200
+gave 51368 at -O2/-O3/-Os).
 
-Regressions: `umulqihi3_factors.c`, `check_umulqihi3_rtl.py`, and
+Regressions: `umulqihi3_factors.c`, `umulqihi3_fold.c`, `check_umulqihi3_rtl.py`, and
 `test_umulqihi3_rtl_checker.py`. Evidence and portable commands:
 `tests/review/UMULQIHI3.md`.

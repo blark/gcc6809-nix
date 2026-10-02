@@ -12,9 +12,12 @@ For constants, QI sign normalization produced negative HI factors: unsigned
 uses their unsigned byte bit patterns. The RTL and the full hardware
 product therefore disagreed, although the low byte still agreed.
 
-This is a latent RTL defect, **not a demonstrated C wrong-code bug**.
-The new runtime case passes on both baseline and fixed compilers. The
-regression that fails before the fix examines actual generated RTL.
+It is a C wrong-code bug. When the compiler knows the byte's value, it
+folds the product from the RTL: in `tests/cases/umulqihi3_fold.c`,
+`if (v.s == -3) return v.u * 200u;` returns 51368 (253 * -56) instead of
+50600 at -O2, -O3 and -Os before the fix (`ldx #-14168`), and 50600 at every
+level after it (gcc6809-n9p). `umulqihi3_factors.c` passes on both compilers;
+`umulqihi3_fold.c` and the RTL checker fail before the fix.
 
 `patches/umulqihi3-operands.patch` separates expansion from recognition:
 
