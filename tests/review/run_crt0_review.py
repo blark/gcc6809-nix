@@ -18,8 +18,9 @@ char *supplied_argv[] __asm__ ("__argv") = {"one", "two", 0};
 volatile unsigned int data_value = 0x1234;
 volatile unsigned char zeroed[8];
 volatile unsigned int ctor_seen, main_seen, atexit_seen, dtor_seen;
+volatile unsigned int main_dtor_seen, goodbye_dtor_seen;
 volatile unsigned int observed_argc, observed_argv, observed_sp;
-static void goodbye(void) { atexit_seen = 0x55; }
+static void goodbye(void) { goodbye_dtor_seen = dtor_seen; atexit_seen = 0x55; }
 static void construct(void) __attribute__((constructor));
 static void destruct(void) __attribute__((destructor));
 static void construct(void) { ctor_seen = 0x11; }
@@ -30,6 +31,7 @@ int main(int argc, char **argv) {
     observed_argc = argc;
     observed_argv = (unsigned int)argv;
     main_seen = ctor_seen;
+    main_dtor_seen = dtor_seen;
     for (i = 0; i < 8; ++i) if (zeroed[i] != 0) return 80 + i;
     if (data_value != 0x1234) return 90;
     if (atexit(goodbye)) return 91;
@@ -62,11 +64,14 @@ def build(runner):
         match = re.search(r'^S903([0-9A-Fa-f]{4})', record, re.M)
         if not match:
             raise RuntimeError('linked image has no S9 entry point')
+        map_text = link_map.read_text()
         symbols = {name: int(addr, 16) for addr, name in
-                   re.findall(r'^\s*([0-9A-Fa-f]+)\s+(_[A-Za-z0-9_]+)\b',
-                              link_map.read_text(), re.M)}
-        for name in ('__start', '__exit', '__argc', '__argv', '_main', '_data_value', '_zeroed',
+                   re.findall(r'^\s*([0-9A-Fa-f]+)\s+([_sl][A-Za-z0-9_.]+)\b',
+                              map_text, re.M)}
+        for name in ('__start', '__exit', '__argc', '__argv', '__stack_ptr',
+                     '_memset', 's_.bss', 'l_.bss', '_main', '_data_value', '_zeroed',
                      '_ctor_seen', '_main_seen', '_atexit_seen', '_dtor_seen',
+                     '_main_dtor_seen', '_goodbye_dtor_seen',
                      '_observed_sp', '_observed_argc', '_observed_argv'):
             if name not in symbols:
                 raise RuntimeError(f'missing linked symbol {name}')
@@ -94,8 +99,14 @@ def exercise(start_sp):
 
     if observed('_data_value') != 0x1234:
         raise RuntimeError('linker/loader did not populate initialized data')
-    if any(mem[symbols['_zeroed'] + i] != 0xa5 for i in range(8)):
+    bss_start = symbols['s_.bss']
+    bss_length = symbols['l_.bss']
+    bss_end = bss_start + bss_length
+    if not (bss_length >= 8 and bss_end == symbols['__stack_ptr']):
+        raise RuntimeError('BSS extent or following stack save slot changed')
+    if any(mem[address] != 0xa5 for address in range(bss_start, bss_end)):
         raise RuntimeError('BSS unexpectedly initialized before crt0 ran')
+    before_bss = mem[bss_start - 1]
 
     # --args allows the probe to supply nonzero __argc and __argv symbols;
     # unlike the default linker placeholders, incorrect null forwarding fails.
@@ -107,9 +118,22 @@ def exercise(start_sp):
     cpu.system_stack_pointer.set(start_sp)
     cpu.program_counter.set(entry)
     cpu.set_cc(0x50)
+    memset_return = None
+    bss_checked = False
     for _ in range(100000):
-        if cpu.program_counter.value == HALT:
+        pc = cpu.program_counter.value
+        if pc == HALT:
             break
+        if pc == symbols['_memset'] and memset_return is None:
+            memset_return = word(cpu.system_stack_pointer.value)
+        if pc == memset_return and not bss_checked:
+            if any(mem[address] != 0 for address in range(bss_start, bss_end)):
+                raise RuntimeError('installed crt0 left part of .bss uncleared')
+            if mem[bss_start - 1] != before_bss:
+                raise RuntimeError('crt0 cleared byte before .bss')
+            if word(bss_end) != start_sp:
+                raise RuntimeError('crt0 overwrote saved loader stack after .bss')
+            bss_checked = True
         try:
             cpu.get_and_call_next_op()
         except (Exception, SystemExit) as error:
@@ -117,6 +141,8 @@ def exercise(start_sp):
     else:
         raise RuntimeError(f'crt0 failed to return to loader; PC={cpu.program_counter.value:04x}')
 
+    if not bss_checked:
+        raise RuntimeError('installed crt0 never returned from BSS memset')
     if cpu.index_x.value != 37 or cpu.accu_d.value != 37:
         raise RuntimeError(f'wrong exit value: X={cpu.index_x.value} D={cpu.accu_d.value}; expected 37')
     checks = {
@@ -126,6 +152,8 @@ def exercise(start_sp):
         'constructor visible in main': (observed('_main_seen'), 0x11),
         'atexit callback': (observed('_atexit_seen'), 0x55),
         'destructor': (observed('_dtor_seen'), 0x33),
+        'destructor absent in main': (observed('_main_dtor_seen'), 0),
+        'destructor absent in user atexit callback': (observed('_goodbye_dtor_seen'), 0),
         'argc forwarded': (observed('_observed_argc'), expected_argc),
         'argv pointer forwarded': (observed('_observed_argv'), symbols['__argv']),
     }

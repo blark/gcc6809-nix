@@ -17,9 +17,13 @@ image; its map identifies `__start`, `_main`, `__exit` and the probe
 variables, while the S9 record supplies the entry address.
 
 The test first fills **all 64 KiB RAM** with `0xa5` and loads only S19
-records. Before executing the entry point, it checks that eight `.bss`
-bytes are still `0xa5` and `.data` contains its initialized value. It
-pushes a loader return address and runs through actual startup and exit.
+records. It reads `s_.bss` and `l_.bss` from the driver's link map. Before
+startup, every byte in the entire `.bss` extent must still be `0xa5`, while
+`.data` contains its initialized value. At the return from startup's
+`_memset`, before `atexit` or constructors can legitimately change BSS,
+**every byte** must be zero. The byte preceding BSS is unchanged and the
+following `.noinit` word still holds the saved loader stack. It then runs
+through `main` and the actual exit path.
 
 ## Checks on the shipped `TARGET_UNKNOWN` startup
 
@@ -27,12 +31,14 @@ pushes a loader return address and runs through actual startup and exit.
   `main` observes S within 16 bytes of each of two distinct loader frames
   (`0xeffe` and `0xdffe`), and `__exit` restores each supplied stack before
   returning to the loader.
-- Eight `.bss` bytes are zeroed by crt0 even though the loader left them
-  nonzero. The initialized `.data` value remains `0x1234`. The loader
-  already populated `.data`: this layout does not need a ROM-to-RAM copy.
-- A constructor executes before `main`, a user `atexit` callback and a
-  destructor execute before control returns to the loader. The callback
-  sequence/order relative to each other is not asserted.
+- The entire `.bss` extent (28 bytes in the tested link) is zeroed by
+  crt0 even though the loader left it nonzero. The initialized `.data`
+  value remains `0x1234`. The loader already populated `.data`: this
+  layout does not need a ROM-to-RAM copy.
+- A constructor executes before `main`. `main` observes that the
+  destructor has **not** run; a user `atexit` callback also observes no
+  destructor, then the destructor runs before control returns to the
+  loader. This checks callback order rather than only their final values.
 - `main(int argc, char **argv)` receives the probe-supplied nonzero
   `__argc` and `__argv` symbols: `argc == 2`, `argv[0] == "one"`,
   `argv[1] == "two"`, and `argv[2] == NULL`. This does not claim that a
@@ -74,7 +80,10 @@ reported BSS left unchanged by code not included in the toolchain. The
 reworked probe now checks the actual driver path. Five temporary C-probe
 mutations were rejected: returning 38 reports an explicit X/D exit mismatch;
 altering the constructor, destructor or forwarded argc reports its own
-field; treating BSS as nonzero makes `main` return 80 instead of 37. Two
-loader stack initializations ensure stack restoration is not validated only
-against one hardcoded final SP. None
-of the mutations was committed. No startup implementation patch is claimed.
+field; treating BSS as nonzero makes `main` return 80 instead of 37. An
+in-memory mutation shortening the real crt0 `_memset` count by one byte is
+now detected as an incomplete full-BSS clear; simulating a destructor
+before `main` is also detected. Two loader stack initializations ensure
+stack restoration is not validated only against one hardcoded final SP.
+None of the mutations was committed. No startup implementation patch is
+claimed.
