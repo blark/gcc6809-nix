@@ -108,6 +108,15 @@ build, raw SEX test, and all 15 new C/optimization combinations. No
 introduced defects found. Existing flake formatting debt was left alone;
 `flake.lock` is unchanged.
 
+## Emulator extraction
+
+The historical results above used the local PyPI recipe and SEX patch.
+The current flake instead consumes the CPU-only vendored MC6809 fork from
+`anachron8-emu` through its Python-package overlay. The local patch is gone;
+the raw opcode and helper assertions are unchanged. All tracked review
+scripts import `tests/run_tests.py`, which retains the `MC6809` API.
+See [the README](../../README.md#emulator-dependency) for Nix-only commands.
+
 ## Reproduce
 
 From this checkout, on a supported host with Nix flakes enabled. Build
@@ -134,23 +143,11 @@ unset M6809_LIBC M6809_CFLAGS
 "$work/python/bin/python3" -B tests/review/run_bit_helpers.py --characterize-overshifts
 ```
 
-The commands above should pass with the fix. To reproduce the broken
-baseline without changing the compiler, libraries, or checkout:
-
-```sh
-nix build $ro --impure --out-link "$work/python-baseline" --expr "
-  let f = builtins.getFlake \"$root\";
-      pkgs = f.inputs.nixpkgs.legacyPackages.$system;
-      emulator = f.packages.$system.mc6809.overrideAttrs (old: {
-        patches = builtins.filter
-          (p: baseNameOf p != \"mc6809-sex-negative.patch\") (old.patches or []);
-      });
-  in pkgs.python3.withPackages (_: [ emulator ])"
-"$work/python-baseline/bin/python3" -B tests/review/check_sex_opcode.py
-"$work/python-baseline/bin/python3" -B tests/run_tests.py
-"$work/python-baseline/bin/python3" -B tests/review/run_bit_helpers.py
-```
-
-Those three baseline commands intentionally exit nonzero: do not chain
-them with `&&` or let `set -e` prevent subsequent checks. These results
-are emulator evidence, not physical-hardware validation.
+The commands above should pass with the vendored fix. To reproduce the
+historical broken PyPI baseline, use a separate checkout at pre-extraction
+revision `987e4f0` and follow that revision's baseline instructions here.
+Filtering `mc6809-sex-negative.patch` from the current CPU package no longer
+removes the fix: it is part of the vendored source. The historical baseline
+commands intentionally exit nonzero; do not chain them with `&&` or let
+`set -e` prevent subsequent checks. These results are emulator evidence,
+not physical-hardware validation.

@@ -168,7 +168,7 @@ The assembly implementation handles this correctly by:
 
 ```bash
 # Run test suite
-nix develop -c uv run tests/run_tests.py multiply_long_vars
+nix develop -c python3 -B tests/run_tests.py multiply_long_vars
 
 # Check generated assembly
 nix develop -c sh -c 'm6809-unknown-none-gcc $M6809_CFLAGS -S -Os tests/cases/multiply_long_vars.c -o -'
@@ -181,7 +181,7 @@ LIBGCC=result/lib/gcc/m6809-unknown-none/4.3.6/libgcc.a
 grep -A 200 "^L0 _muldi3.o" $LIBGCC
 
 # Run trace script
-nix develop -c uv run tests/debug_mulsi3.py
+nix develop -c python3 -B tests/debug_mulsi3.py
 ```
 
 ## Related Tests
