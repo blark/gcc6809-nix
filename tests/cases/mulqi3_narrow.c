@@ -34,6 +34,14 @@ __attribute__((noinline)) unsigned char square_volatile(void)
     signed char value = source_s;
     return (unsigned char)(value * value);
 }
+__attribute__((noinline)) int wide_square_s(signed char value)
+{
+    return value * value;
+}
+__attribute__((noinline)) unsigned int wide_square_u(unsigned char value)
+{
+    return (unsigned int)value * value;
+}
 int main(void)
 {
     source_s = -3;
@@ -45,5 +53,7 @@ int main(void)
     if (square_s(-3) != 9 || square_s(127) != 1) return 5;
     if (square_u(253) != 9 || square_u(255) != 1) return 6;
     if (square_volatile() != 9) return 7;
+    if (wide_square_s(-128) != 16384) return 8;
+    if (wide_square_u(255) != 65025u) return 9;
     return 0;
 }

@@ -2,7 +2,7 @@
 """Check compiled low-byte products with a byte live across a function call.
 
 --exhaustive checks every byte pair in four signedness combinations plus
-three self-product functions at five optimization levels. Requires the
+five self-product functions at five optimization levels. Requires the
 in-tree harness and SEX-corrected emulator.
 """
 
@@ -21,7 +21,7 @@ from run_signed_mul_review import Machine, check_emulator, command, signed
 SOURCE = Path(__file__).resolve().parents[1] / "cases/mulqi3_narrow.c"
 FUNCTIONS = {"narrow_ss": (True, True), "narrow_su": (True, False),
              "narrow_us": (False, True), "narrow_uu": (False, False)}
-SQUARES = ("square_s", "square_u", "square_volatile")
+SQUARES = ("square_s", "square_u", "square_volatile", "wide_square_s", "wide_square_u")
 EDGES = (0, 1, 2, 3, 127, 128, 129, 253, 254, 255)
 
 
@@ -92,9 +92,14 @@ def main():
                 machine.memory._mem[entries["source_s"]] = value
                 checked += 1
                 try:
-                    machine.call(entries[name], value)
-                    actual = machine.cpu.accu_b.value
-                    expected = (value * value) & 255
+                    wide_result = machine.call(entries[name], value)
+                    if name.startswith("wide_"):
+                        actual = wide_result
+                        operand = signed(value) if name == "wide_square_s" else value
+                        expected = operand * operand
+                    else:
+                        actual = machine.cpu.accu_b.value
+                        expected = (value * value) & 255
                     if actual != expected:
                         raise RuntimeError(f"got {actual}, expected {expected}")
                     if machine.memory._mem[entries["source_s"]] != value:
