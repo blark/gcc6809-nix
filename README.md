@@ -39,6 +39,14 @@ as6809 -o hello.s
 aslink -s -m -w -o hello.s19 -b .text=0x2000 hello.rel -l $M6809_LIBC
 ```
 
+This manual `aslink` flow omits the installed GCC `crt0.o`: it enters your
+program without startup initialization. In particular, BSS contains whatever
+was already in RAM; use the normal GCC driver link when your program relies
+on crt0 to clear BSS or run constructors. The driver currently needs
+`-L$M6809_SYSROOT/lib` to find `libc.a` in this Nix toolchain (tracked as
+a separate link-path bug). The installed-startup test and exact contract are
+in [tests/review/STARTUP.md](tests/review/STARTUP.md).
+
 ## Running Tests
 
 ```bash
