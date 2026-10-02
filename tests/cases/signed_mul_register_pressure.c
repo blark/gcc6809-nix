@@ -55,6 +55,7 @@ int main(void)
     piece_x = 4;
     piece_y = 4;
     current_rot = 0;
+    current_piece = 1;
     collision_calls = 0;
     if (!try_rotate(-1) || piece_x != 5 || piece_y != 2 ||
         current_rot != 3 || collision_calls != 2 || moved_calls != 2)
