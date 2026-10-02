@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check compiled low-byte products with a byte live across a function call.
 
---exhaustive checks every byte pair in four signedness combinations at five
-optimization levels. Requires the in-tree harness and SEX-corrected emulator.
+--exhaustive checks every byte pair in four signedness combinations plus
+three self-product functions at five optimization levels. Requires the
+in-tree harness and SEX-corrected emulator.
 """
 
 import argparse
@@ -20,6 +21,7 @@ from run_signed_mul_review import Machine, check_emulator, command, signed
 SOURCE = Path(__file__).resolve().parents[1] / "cases/mulqi3_narrow.c"
 FUNCTIONS = {"narrow_ss": (True, True), "narrow_su": (True, False),
              "narrow_us": (False, True), "narrow_uu": (False, False)}
+SQUARES = ("square_s", "square_u", "square_volatile")
 EDGES = (0, 1, 2, 3, 127, 128, 129, 253, 254, 255)
 
 
@@ -35,7 +37,7 @@ def build(runner, opt):
         code = harness.parse_s19((tmp / "probe.s19").read_text())
         link_map = (tmp / "probe.map").read_text()
         entries = {}
-        for name in (*FUNCTIONS, "source_s", "source_u"):
+        for name in (*FUNCTIONS, *SQUARES, "source_s", "source_u"):
             match = re.search(rf"^\s*([0-9A-Fa-f]+)\s+_{name}\b", link_map, re.M)
             if match is None:
                 raise RuntimeError(f"Missing compiled symbol _{name}")
@@ -81,6 +83,26 @@ def main():
                         failed += 1
                         if failures + failed <= 12:
                             print(f"FAIL {opt} {name}({left}, {right}): {error}", flush=True)
+            total += checked
+            failures += failed
+            print(f"{opt} {name}: {checked - failed}/{checked} passed", flush=True)
+        for name in SQUARES:
+            checked = failed = 0
+            for value in values:
+                machine.memory._mem[entries["source_s"]] = value
+                checked += 1
+                try:
+                    machine.call(entries[name], value)
+                    actual = machine.cpu.accu_b.value
+                    expected = (value * value) & 255
+                    if actual != expected:
+                        raise RuntimeError(f"got {actual}, expected {expected}")
+                    if machine.memory._mem[entries["source_s"]] != value:
+                        raise RuntimeError("volatile source changed")
+                except RuntimeError as error:
+                    failed += 1
+                    if failures + failed <= 12:
+                        print(f"FAIL {opt} {name}({value}): {error}", flush=True)
             total += checked
             failures += failed
             print(f"{opt} {name}: {checked - failed}/{checked} passed", flush=True)
