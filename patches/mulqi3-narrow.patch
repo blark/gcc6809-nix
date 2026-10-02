@@ -1,0 +1,53 @@
+Implement QImode multiplication without widening the operands to a libcall.
+Signed and unsigned products agree modulo 256. Use a full-D unsigned MUL,
+then copy its low byte. Signed HI widening products still use mulhi3.
+
+Add the same-operand alternative to umulqihi3: reload/postreload may put
+both input bytes in B, so copy B to A before MUL. The other alternative
+loads the second operand from memory/immediate. Require the first input
+in B, the byte register MUL actually reads, rather than the broader q class.
+
+Without mulqi3, optabs.c widens narrow products to mulhi3 with paradoxical
+HI subregs of QI pseudos. Those are valid with unspecified high bits, but the
+m6809 reload constraints cannot allocate them in A_REGS across a call.
+
+--- a/gcc/config/m6809/m6809.md
++++ b/gcc/config/m6809/m6809.md
+@@ -958,12 +958,30 @@
+ (define_insn "umulqihi3"
+-   [(set (match_operand:HI 0 "register_operand" "=d")
+-    (mult:HI (zero_extend:HI (match_operand:QI 1 "general_operand" "%q"))
+-    (match_operand:QI 2 "general_operand" "tmK")))]
++   [(set (match_operand:HI 0 "register_operand" "=d,d")
++    (mult:HI (zero_extend:HI (match_operand:QI 1 "general_operand" "%B,B"))
++    (match_operand:QI 2 "general_operand" "1,tmK")))]
+   ""
+-  "lda\t%2\t;umulqihi3\;mul"
+-  [(set_attr "length" "3")])
++  "@
++   tfr\tb,a\t;umulqihi3: same byte\;mul
++   lda\t%2\t;umulqihi3\;mul"
++  [(set_attr "length" "3,3")])
++
++
++; MUL is unsigned, but its low byte also implements signed multiplication
++; modulo 256. Keep the HI output so reload sees the whole D clobber.
++(define_expand "mulqi3"
++  [(set (match_operand:QI 0 "nonimmediate_operand" "")
++    (mult:QI (match_operand:QI 1 "general_operand" "")
++    (match_operand:QI 2 "general_operand" "")))]
++  ""
++{
++  rtx product = gen_reg_rtx (HImode);
++
++  emit_insn (gen_umulqihi3 (product, operands[1], operands[2]));
++  emit_move_insn (operands[0], gen_lowpart (QImode, product));
++  DONE;
++})
+-
+-
++
++
+ ; Expand a 16x16 multiplication into either a libcall or a shift.
+ ; If the second operand is a small constant, use the above form.
+ ; Otherwise, do a libcall.

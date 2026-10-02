@@ -232,3 +232,22 @@ in four signedness combinations, plus constant multipliers, at five
 optimization levels. Use the separately corrected MC6809 emulator so its
 old `SEX` defect cannot mask compiler results. Evidence and reproduction:
 `tests/review/SIGNED_MUL.md`.
+
+---
+
+# mulqi3-narrow.patch
+
+Adds `mulqi3` for products whose result is truncated to a byte. The expander
+uses the existing unsigned native `MUL` into a full-D temporary, then copies
+its low byte. Signed and unsigned bit-pattern products agree modulo 256;
+this does not restore the incorrect signed HI-widening pattern. The native
+pattern also gains a same-operand `tfr b,a; mul` alternative and requires
+its first input in B, fixing a constraint ICE uncovered during review.
+
+Without `mulqi3`, generic expansion creates paradoxical HI views of QI
+operands for `_mulhi3`. m6809 reload cannot allocate a byte surviving a call
+in `A_REGS`, causing the Classic/Super Tetris `try_rotate` compiler ICE.
+
+Regressions: `signed_mul_register_pressure.c`, `mulqi3_narrow.c`, and
+`run_mulqi3_review.py --exhaustive`. Build evidence, scope and portable
+commands: `tests/review/MULQI3_RELOAD.md`.

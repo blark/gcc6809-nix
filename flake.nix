@@ -55,6 +55,7 @@
               ./patches/movsi-fix.patch
               ./patches/indirect-call-stack-offset.patch
               ./patches/signed-mulqi-fix.patch
+              ./patches/mulqi3-narrow.patch
             ];
 
             # gcc12 required because macOS clang can't build GCC
