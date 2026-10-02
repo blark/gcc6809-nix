@@ -47,6 +47,17 @@ hello.s19` compiles and links with newlib's headers, `crt0.o` and `libc.a`, no
 paths needed. The installed-startup test and exact contract are
 in [tests/review/STARTUP.md](tests/review/STARTUP.md).
 
+## Formatting
+
+Use the formatter from the locked nixpkgs revision:
+
+```bash
+nix fmt -- flake.nix
+```
+
+Pass a file explicitly: the pinned nixfmt reads stdin when no files are given.
+`nix flake check` checks formatting as well as the existing driver link test.
+
 ## Running Tests
 
 ```bash

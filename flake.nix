@@ -338,6 +338,13 @@
           inherit (self.packages.${system}) toolchain;
         in
         {
+          formatting =
+            pkgs.runCommand "gcc6809-formatting-check" { nativeBuildInputs = [ self.formatter.${system} ]; }
+              ''
+                nixfmt --check ${./flake.nix}
+                touch $out
+              '';
+
           # strlen on a volatile buffer can't be folded, so libc.a is linked
           driver = pkgs.runCommand "gcc6809-driver-check" { } ''
             printf '#include <stdio.h>\n#include <string.h>\nvolatile char s[] = "6809";\nint main(void){ return (int)strlen((const char *)s); }\n' > hello.c
@@ -347,6 +354,8 @@
           '';
         }
       );
+
+      formatter = forAllSystems (system: nixpkgsFor.${system}.nixfmt-rfc-style);
 
       apps = forAllSystems (system: {
         test = {
