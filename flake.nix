@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     anachron8-emu = {
-      url = "git+https://git.sherwood.haus/blark/anachron8-emu.git?ref=extract/package";
+      url = "git+https://git.sherwood.haus/blark/anachron8-emu.git";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
