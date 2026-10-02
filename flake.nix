@@ -28,14 +28,14 @@
           overlays = [ anachron8-emu.overlays.default ];
         }
       );
+
+      target = "m6809-unknown-none";
     in
     {
       packages = forAllSystems (
         system:
         let
           pkgs = nixpkgsFor.${system};
-
-          target = "m6809-unknown-none";
 
           # Flags to compile GCC 4.3.6 with modern clang/gcc - suppress warnings
           # that are now errors, and use legacy GNU89 inline semantics
@@ -273,6 +273,16 @@
               gcc6809
               newlib-m6809
             ];
+            # The driver finds crt0.o, cc1, libc.a and newlib's headers from
+            # its own location, resolving symlinks: as a symlink into the
+            # gcc6809 output it never sees newlib. A real copy here makes it
+            # search this joined tree (gcc6809-063).
+            postBuild = ''
+              for driver in cpp gcc gcc-4.3.6; do
+                exe=$out/bin/${target}-$driver
+                cp --remove-destination "$(readlink -f "$exe")" "$exe"
+              done
+            '';
             meta = gcc6809.meta // {
               description = "Complete GCC 6809 toolchain with C library";
             };
@@ -319,6 +329,25 @@
         }
       );
 
+      # nix flake check: the plain driver compiles against newlib's headers and
+      # links crt0.o and libc.a with no paths given (gcc6809-063)
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgsFor.${system};
+          inherit (self.packages.${system}) toolchain;
+        in
+        {
+          # strlen on a volatile buffer can't be folded, so libc.a is linked
+          driver = pkgs.runCommand "gcc6809-driver-check" { } ''
+            printf '#include <stdio.h>\n#include <string.h>\nvolatile char s[] = "6809";\nint main(void){ return (int)strlen((const char *)s); }\n' > hello.c
+            ${toolchain}/bin/${target}-gcc -Os hello.c -o hello.s19
+            grep -q '^S9' hello.s19
+            touch $out
+          '';
+        }
+      );
+
       apps = forAllSystems (system: {
         test = {
           type = "app";
@@ -344,7 +373,7 @@
             GCC6809_SRC = "${self.packages.${system}.gcc6809-src}";
             shellHook = ''
               echo "GCC 6809 toolchain available"
-              echo "  Compiler: m6809-unknown-none-gcc \$M6809_CFLAGS"
+              echo "  Compiler: m6809-unknown-none-gcc (finds newlib's headers and libc.a itself)"
               echo "  Linker: aslink ... -l \$M6809_LIBC"
               echo "  Patched source: \$GCC6809_SRC"
             '';

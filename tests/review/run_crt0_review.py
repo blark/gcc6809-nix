@@ -51,11 +51,9 @@ def build(runner):
         tmp = Path(directory)
         src, image, link_map = (tmp / 'probe.c', tmp / 'probe.s19', tmp / 'probe.map')
         src.write_text(PROBE)
-        # -L works around the separately filed, pre-existing symlinkJoin
-        # driver search-path bug. Do not pass crt0.o or a custom entry point.
+        # The plain driver: no include or library paths, no crt0.o, no
+        # custom entry point (it finds newlib itself since gcc6809-063).
         command = [str(runner.gcc), '-O0', '-std=c99',
-                   f'-I{runner.toolchain}/m6809-unknown-none/include',
-                   f'-L{runner.toolchain}/m6809-unknown-none/lib',
                    str(src), '-Wl,--args', '-Wl,--map', '-o', str(image)]
         result = subprocess.run(command, cwd=tmp, capture_output=True, text=True, timeout=600)
         if result.returncode:
