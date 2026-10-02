@@ -1,0 +1,56 @@
+Model both unsigned byte operands at HI width in native MUL RTL.
+Fold QI constants to unsigned HI values before emitting the constant pattern.
+Regressions: tests/cases/umulqihi3_factors.c and check_umulqihi3_rtl.py.
+
+--- a/gcc/config/m6809/m6809.md
++++ b/gcc/config/m6809/m6809.md
+@@ -955,15 +955,45 @@
+ 
+ ; MUL is unsigned. Signed byte operands must widen before HI multiplication;
+ ; only the zero-extending pattern can use this instruction directly.
+-(define_insn "umulqihi3"
+-   [(set (match_operand:HI 0 "register_operand" "=d,d")
+-    (mult:HI (zero_extend:HI (match_operand:QI 1 "general_operand" "%B,B"))
+-    (match_operand:QI 2 "general_operand" "1,tmK")))]
++(define_expand "umulqihi3"
++  [(set (match_operand:HI 0 "register_operand" "")
++    (mult:HI
++      (zero_extend:HI (match_operand:QI 1 "nonimmediate_operand" ""))
++      (zero_extend:HI (match_operand:QI 2 "general_operand" ""))))]
++  ""
++{
++  /* Constants are sign-normalized in QImode. In the HI product their
++     value must be the unsigned byte that LDA loads, not e.g. -56 for 200. */
++  if (GET_CODE (operands[2]) == CONST_INT)
++    {
++      emit_insn (gen_umulqihi3_const (operands[0], operands[1],
++                                     GEN_INT (INTVAL (operands[2]) & 255)));
++      DONE;
++    }
++})
++
++
++(define_insn "*umulqihi3"
++  [(set (match_operand:HI 0 "register_operand" "=d,d")
++    (mult:HI
++      (zero_extend:HI (match_operand:QI 1 "nonimmediate_operand" "%B,B"))
++      (zero_extend:HI (match_operand:QI 2 "nonimmediate_operand" "1,tm"))))]
+   ""
+   "@
+    tfr\tb,a\t;umulqihi3: same byte\;mul
+    lda\t%2\t;umulqihi3\;mul"
+   [(set_attr "length" "3,3")])
++
++
++; Constant zero extension is folded: the factor is an unsigned HI value.
++(define_insn "umulqihi3_const"
++  [(set (match_operand:HI 0 "register_operand" "=d")
++    (mult:HI
++      (zero_extend:HI (match_operand:QI 1 "nonimmediate_operand" "B"))
++      (match_operand:HI 2 "const_int_operand" "i")))]
++  "INTVAL (operands[2]) >= 0 && INTVAL (operands[2]) <= 255"
++  "lda\t%2\t;umulqihi3_const\;mul"
++  [(set_attr "length" "3")])
+ 
+ 
+ ; MUL is unsigned, but its low byte also implements signed multiplication
