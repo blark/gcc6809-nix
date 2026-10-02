@@ -36,8 +36,10 @@ The initial RTL expansion already contains those subregs.
 
 `patches/mulqi3-narrow.patch` supplies a QImode multiplication expander. It
 calls the existing unsigned widening `umulqihi3` into a fresh HI temporary,
-then copies the low byte. Modeling the full D output also models A's
-clobber, rather than describing a byte-only output for a word-writing MUL.
+then copies the low byte. The HI output tells reload that MUL writes all of
+D, not only the byte result. MUL also overwrites A, which this port models as
+a separate hard register; that needs no clobber of its own because A is a
+fixed register the allocator never assigns.
 
 For any byte bit patterns a and b, signed and unsigned interpretations
 differ by multiples of 256, so their products agree modulo 256. This does
